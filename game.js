@@ -2,8 +2,8 @@
 const CONFIG = {
   TILE_SIZE: 20,
   PACMAN_SPEED: 0.8, // pixels per frame at 60fps (~1.5 tiles/sec - classic feel)
-  GHOST_SPEED: 0.7, // slightly slower than Pac-Man
-  GHOST_SCARED_SPEED: 0.5, // much slower when scared
+  GHOST_SPEED: 0.6, // Slower than Pac-Man for fair gameplay
+  GHOST_SCARED_SPEED: 0.4, // Much slower when scared
   POWER_DURATION: 10000,
   INVERSE_DURATION: 15000,
   FRUIT_SPAWN_TIME: 10000,
@@ -318,13 +318,19 @@ class Game {
     // Create Pac-Man
     this.pacman = new PacMan(9, 15);
 
-    // Create Ghosts - spread out in the ghost house
+    // Create Ghosts - start in ghost house with scatter targets (corners for patrol)
     this.ghosts = [
-      new Ghost(8, 7, "#FF0000", "red"), // Blinky (red) - top left
-      new Ghost(10, 7, "#FFB8FF", "pink"), // Pinky (pink) - top right
-      new Ghost(8, 9, "#00FFFF", "cyan"), // Inky (cyan) - bottom left
-      new Ghost(10, 9, "#FFB852", "orange"), // Clyde (orange) - bottom right
+      new Ghost(8, 7, "#FF0000", "red", { x: 17, y: 1 }), // Blinky - scatter to top right
+      new Ghost(9, 7, "#FFB8FF", "pink", { x: 1, y: 1 }), // Pinky - scatter to top left
+      new Ghost(10, 7, "#00FFFF", "cyan", { x: 17, y: 19 }), // Inky - scatter to bottom right
+      new Ghost(9, 9, "#FFB852", "orange", { x: 1, y: 19 }), // Clyde - scatter to bottom left
     ];
+
+    // Set release timers so ghosts exit house one by one
+    this.ghosts[0].releaseTimer = 0; // Red exits immediately
+    this.ghosts[1].releaseTimer = 3000; // Pink waits 3 seconds
+    this.ghosts[2].releaseTimer = 6000; // Cyan waits 6 seconds
+    this.ghosts[3].releaseTimer = 9000; // Orange waits 9 seconds
 
     this.fruits = [];
     this.splitPacmans = [];
@@ -410,9 +416,6 @@ class Game {
     // CRITICAL: Always schedule next frame first to keep loop running
     requestAnimationFrame((time) => this.gameLoop(time));
 
-    // Don't update/render until game has started
-    if (!this.gameStarted) return;
-
     // Initialize lastTime on first frame
     if (this.lastTime === 0) {
       this.lastTime = currentTime;
@@ -428,7 +431,8 @@ class Game {
       deltaTime = 16.67; // Reset to ~60fps frame time
     }
 
-    if (!this.paused && !this.gameOver) {
+    // Always render, but only update if game has started
+    if (this.gameStarted && !this.paused && !this.gameOver) {
       this.update();
     }
 
@@ -475,13 +479,12 @@ class Game {
     if (!this.inverseMode) {
       this.updatePacMan();
 
-      // Update split pac-mans
       if (this.splitPowerActive) {
+        // Ghosts frozen in place while split pac-men hunt them
         this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp));
+      } else {
+        this.ghosts.forEach((ghost) => this.updateGhost(ghost));
       }
-
-      // Update ghosts
-      this.ghosts.forEach((ghost) => this.updateGhost(ghost));
 
       // Check collisions
       this.checkCollisions();
@@ -516,42 +519,41 @@ class Game {
     if (this.keys["ArrowLeft"]) desiredDirection = "left";
     if (this.keys["ArrowRight"]) desiredDirection = "right";
 
-    // Auto-align Pac-Man to grid when moving straight to prevent drift
-    if (this.pacman.direction === "left" || this.pacman.direction === "right") {
-      // Moving horizontally - keep aligned vertically
-      const targetY =
-        Math.round(this.pacman.y / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-      const diffY = Math.abs(this.pacman.y - targetY);
-      if (diffY < 5) {
-        this.pacman.y = targetY;
-        newY = targetY;
-      }
-    } else if (
-      this.pacman.direction === "up" ||
-      this.pacman.direction === "down"
-    ) {
+    // Always keep Pac-Man aligned on the perpendicular axis to prevent getting stuck
+    const alignThreshold = 5; // Increased threshold for better alignment
+
+    if (this.pacman.direction === "up" || this.pacman.direction === "down") {
       // Moving vertically - keep aligned horizontally
       const targetX =
         Math.round(this.pacman.x / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
       const diffX = Math.abs(this.pacman.x - targetX);
-      if (diffX < 5) {
+      if (diffX < alignThreshold) {
         this.pacman.x = targetX;
         newX = targetX;
       }
+    } else if (
+      this.pacman.direction === "left" ||
+      this.pacman.direction === "right"
+    ) {
+      // Moving horizontally - keep aligned vertically
+      const targetY =
+        Math.round(this.pacman.y / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
+      const diffY = Math.abs(this.pacman.y - targetY);
+      if (diffY < alignThreshold) {
+        this.pacman.y = targetY;
+        newY = targetY;
+      }
     }
 
-    // If trying to change direction, snap to grid more aggressively
+    // If changing direction, align on the NEW perpendicular axis
     if (desiredDirection && desiredDirection !== this.pacman.direction) {
-      const alignThreshold = CONFIG.TILE_SIZE / 2; // Much more forgiving - half a tile
-
       if (desiredDirection === "up" || desiredDirection === "down") {
         // Turning vertically - align horizontally
         const targetX =
           Math.round(this.pacman.x / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
         const diffX = Math.abs(this.pacman.x - targetX);
-
-        if (diffX < alignThreshold) {
-          this.pacman.x = targetX; // Snap to grid
+        if (diffX <= alignThreshold) {
+          this.pacman.x = targetX;
           newX = targetX;
         }
       } else {
@@ -559,43 +561,36 @@ class Game {
         const targetY =
           Math.round(this.pacman.y / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
         const diffY = Math.abs(this.pacman.y - targetY);
-
-        if (diffY < alignThreshold) {
-          this.pacman.y = targetY; // Snap to grid
+        if (diffY <= alignThreshold) {
+          this.pacman.y = targetY;
           newY = targetY;
         }
       }
     }
 
-    // Apply movement based on desired direction, or continue in current direction
+    // Apply movement based on current direction or desired direction
     if (desiredDirection) {
-      // Try desired direction first
-      let tryX = newX;
-      let tryY = newY;
+      const testX = newX;
+      const testY = newY;
 
-      if (desiredDirection === "up") tryY -= CONFIG.PACMAN_SPEED;
-      if (desiredDirection === "down") tryY += CONFIG.PACMAN_SPEED;
-      if (desiredDirection === "left") tryX -= CONFIG.PACMAN_SPEED;
-      if (desiredDirection === "right") tryX += CONFIG.PACMAN_SPEED;
+      // Calculate new position based on desired direction
+      if (desiredDirection === "up") newY -= CONFIG.PACMAN_SPEED;
+      if (desiredDirection === "down") newY += CONFIG.PACMAN_SPEED;
+      if (desiredDirection === "left") newX -= CONFIG.PACMAN_SPEED;
+      if (desiredDirection === "right") newX += CONFIG.PACMAN_SPEED;
 
-      if (this.canMove(tryX, tryY)) {
-        // Can move in desired direction
-        newX = tryX;
-        newY = tryY;
+      // If we can move in desired direction, update direction
+      if (this.canMove(newX, newY)) {
         newDirection = desiredDirection;
       } else {
-        // Can't turn yet, continue in current direction
+        // Can't move in desired direction, try current direction
+        newX = testX;
+        newY = testY;
         if (this.pacman.direction === "up") newY -= CONFIG.PACMAN_SPEED;
         if (this.pacman.direction === "down") newY += CONFIG.PACMAN_SPEED;
         if (this.pacman.direction === "left") newX -= CONFIG.PACMAN_SPEED;
         if (this.pacman.direction === "right") newX += CONFIG.PACMAN_SPEED;
       }
-    } else {
-      // No input, continue in current direction
-      if (this.pacman.direction === "up") newY -= CONFIG.PACMAN_SPEED;
-      if (this.pacman.direction === "down") newY += CONFIG.PACMAN_SPEED;
-      if (this.pacman.direction === "left") newX -= CONFIG.PACMAN_SPEED;
-      if (this.pacman.direction === "right") newX += CONFIG.PACMAN_SPEED;
     }
 
     // Check if Pac-Man is actually moving
@@ -663,40 +658,57 @@ class Game {
     });
   }
 
-  updateSplitPacMan(sp) {
-    let newX = sp.x;
-    let newY = sp.y;
+  findNearestTargetGhost(x, y) {
+    let nearest = null;
+    let minDist = Infinity;
 
-    // Simple AI: move towards nearest scared ghost
-    const target = this.findNearestScaredGhost(sp.x, sp.y);
-    if (target) {
-      const dx = target.x - sp.x;
-      const dy = target.y - sp.y;
-
-      if (Math.abs(dx) > Math.abs(dy)) {
-        newX += dx > 0 ? CONFIG.PACMAN_SPEED : -CONFIG.PACMAN_SPEED;
-      } else {
-        newY += dy > 0 ? CONFIG.PACMAN_SPEED : -CONFIG.PACMAN_SPEED;
+    for (const ghost of this.ghosts) {
+      if (!ghost.eaten) {
+        const dist = Math.hypot(ghost.x - x, ghost.y - y);
+        if (dist < minDist) {
+          minDist = dist;
+          nearest = ghost;
+        }
       }
     }
 
-    if (this.canMove(newX, newY)) {
-      sp.x = newX;
-      sp.y = newY;
+    return nearest;
+  }
+
+  updateSplitPacMan(sp) {
+    const speed = CONFIG.PACMAN_SPEED * 1.15;
+    const target = this.findNearestTargetGhost(sp.x, sp.y);
+    if (!target) return;
+
+    const centered = this.isEntityCentered(sp, 0.5);
+
+    if (centered) {
+      sp.x = this.getTileCenter(sp.x);
+      sp.y = this.getTileCenter(sp.y);
+
+      sp.direction = this.findPathDirection(
+        sp.x,
+        sp.y,
+        target.x,
+        target.y,
+        sp.direction,
+      );
     }
 
+    this.moveEntityInDirection(sp, speed);
     this.handleTeleport(sp);
   }
 
   updateGhost(ghost) {
     if (ghost.isPlayer) return; // Don't update player-controlled ghost in normal mode
 
-    let target;
+    let target = null;
 
     if (!this.inverseMode) {
-      // Normal mode
+      // Normal mode - handle AI states
+
       if (ghost.scared) {
-        // Run away from pac-man
+        // Scared mode: run away from pac-man
         target = this.getOppositePoint(
           this.pacman.x,
           this.pacman.y,
@@ -704,8 +716,58 @@ class Game {
           ghost.y,
         );
       } else {
-        // Chase pac-man
-        target = { x: this.pacman.x, y: this.pacman.y };
+        // Handle ghost house exit
+        if (ghost.mode === "exitingHouse") {
+          if (ghost.releaseTimer > 0) {
+            ghost.releaseTimer -= 16.67;
+            return;
+          }
+
+          // The centre tile above the house is a wall in this map,
+          // so use a real open lane instead.
+          const leftExit = {
+            x: 8 * CONFIG.TILE_SIZE,
+            y: 6 * CONFIG.TILE_SIZE,
+          };
+
+          const rightExit = {
+            x: 10 * CONFIG.TILE_SIZE,
+            y: 6 * CONFIG.TILE_SIZE,
+          };
+
+          // Pick the nearer reachable exit lane
+          const distLeft = Math.hypot(
+            ghost.x - leftExit.x,
+            ghost.y - leftExit.y,
+          );
+          const distRight = Math.hypot(
+            ghost.x - rightExit.x,
+            ghost.y - rightExit.y,
+          );
+
+          const exitTarget = distLeft <= distRight ? leftExit : rightExit;
+
+          if (Math.hypot(ghost.x - exitTarget.x, ghost.y - exitTarget.y) < 4) {
+            ghost.mode = "chase";
+            target = { x: this.pacman.x, y: this.pacman.y };
+          } else {
+            target = exitTarget;
+          }
+        }
+
+        // Always set a target for scatter or chase mode
+        if (ghost.mode === "scatter" || ghost.mode === "chase") {
+          // Calculate distance to Pac-Man
+          const distToPacman = Math.hypot(
+            this.pacman.x - ghost.x,
+            this.pacman.y - ghost.y,
+          );
+
+          // Always chase Pac-Man (simplified AI)
+          // In original Pac-Man, ghosts have different personalities, but for now just chase
+          ghost.mode = "chase";
+          target = { x: this.pacman.x, y: this.pacman.y };
+        }
       }
     } else {
       // Inverse mode: ghosts become pac-men chasing the player ghost
@@ -715,6 +777,7 @@ class Game {
       }
     }
 
+    // Always move if we have a target
     if (target) {
       this.moveGhostTowards(ghost, target);
     }
@@ -745,35 +808,193 @@ class Game {
     this.score += 2; // Double points as specified
   }
 
-  moveGhostTowards(ghost, target) {
-    const speed = ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED;
-    const dx = target.x - ghost.x;
-    const dy = target.y - ghost.y;
+  getTileCenter(value) {
+    return Math.round(value / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
+  }
 
-    let newX = ghost.x;
-    let newY = ghost.y;
+  isEntityCentered(entity, threshold = 2) {
+    const centerX = this.getTileCenter(entity.x);
+    const centerY = this.getTileCenter(entity.y);
+    return (
+      Math.abs(entity.x - centerX) <= threshold &&
+      Math.abs(entity.y - centerY) <= threshold
+    );
+  }
 
-    if (Math.abs(dx) > Math.abs(dy)) {
-      newX += dx > 0 ? speed : -speed;
-    } else {
-      newY += dy > 0 ? speed : -speed;
+  getAvailableDirections(ghost) {
+    const step = CONFIG.TILE_SIZE;
+    const directions = [
+      { dir: "up", x: ghost.x, y: ghost.y - step },
+      { dir: "down", x: ghost.x, y: ghost.y + step },
+      { dir: "left", x: ghost.x - step, y: ghost.y },
+      { dir: "right", x: ghost.x + step, y: ghost.y },
+    ];
+
+    return directions.filter((d) => this.canMove(d.x, d.y));
+  }
+
+  chooseGhostDirection(ghost, target) {
+    const oppositeDir = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left",
+    };
+
+    let options = this.getAvailableDirections(ghost);
+
+    // Avoid reversing unless there is no other option
+    const nonReverse = options.filter(
+      (opt) => opt.dir !== oppositeDir[ghost.direction],
+    );
+
+    if (nonReverse.length > 0) {
+      options = nonReverse;
     }
 
+    if (options.length === 0) return ghost.direction;
+
+    // Pick option whose next tile is closest to target
+    let best = options[0];
+    let bestDist = Math.hypot(best.x - target.x, best.y - target.y);
+
+    for (const opt of options) {
+      const dist = Math.hypot(opt.x - target.x, opt.y - target.y);
+      if (dist < bestDist) {
+        best = opt;
+        bestDist = dist;
+      }
+    }
+
+    return best.dir;
+  }
+
+  moveEntityInDirection(entity, speed) {
+    let newX = entity.x;
+    let newY = entity.y;
+
+    if (entity.direction === "up") newY -= speed;
+    if (entity.direction === "down") newY += speed;
+    if (entity.direction === "left") newX -= speed;
+    if (entity.direction === "right") newX += speed;
+
     if (this.canMove(newX, newY)) {
-      ghost.x = newX;
-      ghost.y = newY;
-    } else {
-      // Try alternate direction
-      if (Math.abs(dx) > Math.abs(dy)) {
-        newY = ghost.y + (dy > 0 ? speed : -speed);
-      } else {
-        newX = ghost.x + (dx > 0 ? speed : -speed);
+      entity.x = newX;
+      entity.y = newY;
+      return true;
+    }
+
+    return false;
+  }
+
+  toGrid(x, y) {
+    return {
+      x: Math.floor((x + CONFIG.TILE_SIZE / 2) / CONFIG.TILE_SIZE),
+      y: Math.floor((y + CONFIG.TILE_SIZE / 2) / CONFIG.TILE_SIZE),
+    };
+  }
+
+  isWalkableTile(x, y) {
+    if (y < 0 || y >= this.map.length || x < 0 || x >= this.map[0].length) {
+      return false;
+    }
+    return this.map[y][x] !== 1;
+  }
+
+  getTileNeighbors(tile) {
+    const dirs = [
+      { dir: "up", x: tile.x, y: tile.y - 1 },
+      { dir: "down", x: tile.x, y: tile.y + 1 },
+      { dir: "left", x: tile.x - 1, y: tile.y },
+      { dir: "right", x: tile.x + 1, y: tile.y },
+    ];
+
+    return dirs.filter((d) => this.isWalkableTile(d.x, d.y));
+  }
+
+  findPathDirection(startX, startY, targetX, targetY, currentDirection = "up") {
+    const start = this.toGrid(startX, startY);
+    const target = this.toGrid(targetX, targetY);
+
+    if (start.x === target.x && start.y === target.y) {
+      return currentDirection;
+    }
+
+    const queue = [start];
+    const visited = new Set([`${start.x},${start.y}`]);
+    const parent = new Map();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (current.x === target.x && current.y === target.y) {
+        break;
       }
 
-      if (this.canMove(newX, newY)) {
-        ghost.x = newX;
-        ghost.y = newY;
+      for (const next of this.getTileNeighbors(current)) {
+        const key = `${next.x},${next.y}`;
+        if (!visited.has(key)) {
+          visited.add(key);
+          parent.set(key, current);
+          queue.push({ x: next.x, y: next.y, dir: next.dir });
+        }
       }
+    }
+
+    const targetKey = `${target.x},${target.y}`;
+    if (!visited.has(targetKey)) {
+      return currentDirection;
+    }
+
+    let step = { x: target.x, y: target.y };
+    let prev = parent.get(`${step.x},${step.y}`);
+
+    while (prev && !(prev.x === start.x && prev.y === start.y)) {
+      step = prev;
+      prev = parent.get(`${step.x},${step.y}`);
+    }
+
+    if (step.x > start.x) return "right";
+    if (step.x < start.x) return "left";
+    if (step.y > start.y) return "down";
+    if (step.y < start.y) return "up";
+
+    return currentDirection;
+  }
+
+  moveGhostTowards(ghost, target) {
+    const speed = ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED;
+
+    const centered = this.isEntityCentered(ghost, 0.5);
+
+    if (centered) {
+      ghost.x = this.getTileCenter(ghost.x);
+      ghost.y = this.getTileCenter(ghost.y);
+
+      ghost.direction = this.findPathDirection(
+        ghost.x,
+        ghost.y,
+        target.x,
+        target.y,
+        ghost.direction,
+      );
+    }
+
+    const moved = this.moveEntityInDirection(ghost, speed);
+
+    if (!moved) {
+      ghost.x = this.getTileCenter(ghost.x);
+      ghost.y = this.getTileCenter(ghost.y);
+
+      ghost.direction = this.findPathDirection(
+        ghost.x,
+        ghost.y,
+        target.x,
+        target.y,
+        ghost.direction,
+      );
+
+      this.moveEntityInDirection(ghost, speed);
     }
   }
 
@@ -934,13 +1155,38 @@ class Game {
       this.splitPowerAvailable = false;
       this.soundManager.playSplitPower();
 
-      // Create 3 additional pac-mans
-      for (let i = 0; i < 3; i++) {
-        this.splitPacmans.push({
-          x: this.pacman.x + (i + 1) * 20,
-          y: this.pacman.y,
-          direction: "right",
-        });
+      // Freeze and mark ghosts as edible targets
+      this.ghosts.forEach((ghost) => {
+        if (!ghost.eaten) {
+          ghost.scared = true;
+        }
+      });
+
+      this.splitPacmans = [];
+
+      // 3 clones + original = 4 total pac-men active
+      const spawnOffsets = [
+        { x: -CONFIG.TILE_SIZE, y: 0, direction: "left" },
+        { x: CONFIG.TILE_SIZE, y: 0, direction: "right" },
+        { x: 0, y: -CONFIG.TILE_SIZE, direction: "up" },
+      ];
+
+      for (const offset of spawnOffsets) {
+        const clone = {
+          x: this.pacman.x + offset.x,
+          y: this.pacman.y + offset.y,
+          direction: offset.direction,
+        };
+
+        if (this.canMove(clone.x, clone.y)) {
+          this.splitPacmans.push(clone);
+        } else {
+          this.splitPacmans.push({
+            x: this.pacman.x,
+            y: this.pacman.y,
+            direction: offset.direction,
+          });
+        }
       }
     }
   }
@@ -952,12 +1198,17 @@ class Game {
     // Check split pac-mans collision with ghosts
     this.splitPacmans.forEach((sp) => this.checkEntityGhostCollision(sp));
 
-    // Check if all ghosts are eaten in split mode
+    // End split mode when all ghosts are eaten
     if (this.splitPowerActive) {
-      const allEaten = this.ghosts.every((g) => g.eaten || !g.scared);
-      if (allEaten) {
+      const remainingGhosts = this.ghosts.filter((g) => !g.eaten);
+
+      if (remainingGhosts.length === 0) {
         this.splitPowerActive = false;
         this.splitPacmans = [];
+        this.powerMode = false;
+        this.ghosts.forEach((g) => {
+          g.scared = false;
+        });
       }
     }
   }
@@ -1000,10 +1251,14 @@ class Game {
 
   respawnGhost(ghost) {
     setTimeout(() => {
+      // Respawn in ghost house
       ghost.x = 9 * CONFIG.TILE_SIZE;
-      ghost.y = 9 * CONFIG.TILE_SIZE;
+      ghost.y = 7 * CONFIG.TILE_SIZE;
       ghost.scared = false;
       ghost.eaten = false;
+      ghost.mode = "exitingHouse";
+      ghost.releaseTimer = 1000; // Wait 1 second before leaving house
+      ghost.direction = "up"; // Reset direction
     }, 2000);
   }
 
@@ -1017,18 +1272,21 @@ class Game {
       this.pacman.x = 9 * CONFIG.TILE_SIZE;
       this.pacman.y = 15 * CONFIG.TILE_SIZE;
 
-      // Reset ghost positions to match initial setup
+      // Reset ghost positions to ghost house
       const ghostPositions = [
         { x: 8, y: 7 }, // Blinky
-        { x: 10, y: 7 }, // Pinky
-        { x: 8, y: 9 }, // Inky
-        { x: 10, y: 9 }, // Clyde
+        { x: 9, y: 7 }, // Pinky
+        { x: 10, y: 7 }, // Inky
+        { x: 9, y: 9 }, // Clyde
       ];
 
       this.ghosts.forEach((ghost, i) => {
         ghost.x = ghostPositions[i].x * CONFIG.TILE_SIZE;
         ghost.y = ghostPositions[i].y * CONFIG.TILE_SIZE;
         ghost.scared = false;
+        ghost.mode = "scatter"; // Start in scatter mode after respawn
+        ghost.releaseTimer = 0; // Release immediately after death
+        ghost.direction = "up"; // Reset direction
       });
 
       this.powerMode = false;
@@ -1308,7 +1566,7 @@ class PacMan {
 
 // Ghost Class
 class Ghost {
-  constructor(x, y, color, name) {
+  constructor(x, y, color, name, scatterTarget) {
     this.x = x * CONFIG.TILE_SIZE;
     this.y = y * CONFIG.TILE_SIZE;
     this.color = color;
@@ -1316,6 +1574,11 @@ class Ghost {
     this.scared = false;
     this.eaten = false;
     this.isPlayer = false;
+    this.mode = "exitingHouse"; // exitingHouse, scatter, chase
+    this.scatterTarget = scatterTarget; // Corner to patrol toward in scatter mode
+    this.releaseTimer = 0; // Timer before ghost can leave house
+    this.direction = "up"; // Current movement direction
+    this.lastDirection = "up"; // Track last successful direction
   }
 }
 
