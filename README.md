@@ -1,4 +1,4 @@
-# Modern Pac-Man
+# Pac-Bloke
 
 A modern twist on the classic Pac-Man game built with vanilla HTML, CSS, and JavaScript.
 

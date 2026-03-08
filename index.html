@@ -3,13 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Modern Pac-Man</title>
+    <title>Pac-Bloke</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <div class="game-container">
         <div class="header">
-            <h1>MODERN PAC-MAN</h1>
+            <h1>
+                PAC-BLOKE
+                <svg width="50" height="50" viewBox="0 0 50 50" style="display: inline-block; vertical-align: middle; margin-left: -22px; margin-bottom: 6.5px;">
+                    <defs>
+                        <mask id="pacman-mouth">
+                            <rect width="50" height="50" fill="white" />
+                            <polygon points="25,25 43,14 43,36" fill="black" />
+                        </mask>
+                    </defs>
+                    <circle cx="25" cy="25" r="18" fill="#FFFF00" mask="url(#pacman-mouth)" />
+                    <circle cx="25" cy="16" r="2.2" fill="#000000" />
+                </svg>
+            </h1>
             <div class="game-info">
                 <div class="info-item">
                     <span class="label">SCORE:</span>
