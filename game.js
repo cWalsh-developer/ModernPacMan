@@ -239,7 +239,7 @@ class Game {
     this.powerTimer = 0;
     this.inverseMode = false;
     this.inverseModeTimer = 0;
-    this.splitPowerAvailable = false;
+    this.splitPowerCount = 1; // Start with 1 power-up by default
     this.splitPowerActive = false;
     this.randomTeleport = false;
 
@@ -275,7 +275,7 @@ class Game {
 
       if (
         e.key === " " &&
-        this.splitPowerAvailable &&
+        this.splitPowerCount > 0 &&
         this.powerMode &&
         !this.inverseMode
       ) {
@@ -323,7 +323,7 @@ class Game {
       new Ghost(8, 7, "#FF0000", "red", { x: 17, y: 1 }), // Blinky - scatter to top right
       new Ghost(9, 7, "#FFB8FF", "pink", { x: 1, y: 1 }), // Pinky - scatter to top left
       new Ghost(10, 7, "#00FFFF", "cyan", { x: 17, y: 19 }), // Inky - scatter to bottom right
-      new Ghost(9, 9, "#FFB852", "orange", { x: 1, y: 19 }), // Clyde - scatter to bottom left
+      new Ghost(9, 7, "#FFB852", "orange", { x: 1, y: 19 }), // Clyde - scatter to bottom left
     ];
 
     // Set release timers so ghosts exit house one by one
@@ -347,7 +347,7 @@ class Game {
 
     // Determine level features
     this.randomTeleport = this.level >= CONFIG.TELEPORT_LEVEL_THRESHOLD;
-    this.splitPowerAvailable = this.level >= CONFIG.SPLIT_LEVEL_THRESHOLD;
+    // Split power is now available on all levels, no level check needed
 
     this.updateUI();
   }
@@ -393,14 +393,14 @@ class Game {
     const splitStatus = document.getElementById("splitPowerStatus");
     splitStatus.classList.toggle(
       "active",
-      this.splitPowerAvailable && this.powerMode,
+      this.splitPowerCount > 0 && this.powerMode,
     );
-    splitStatus.querySelector(".power-value").textContent = this
-      .splitPowerAvailable
-      ? this.powerMode
-        ? "READY"
-        : "OFF"
-      : "LOCKED";
+    splitStatus.querySelector(".power-value").textContent =
+      this.splitPowerCount > 0
+        ? this.powerMode
+          ? `x${this.splitPowerCount}`
+          : `x${this.splitPowerCount}`
+        : "x0";
 
     const inverseStatus = document.getElementById("inverseModeStatus");
     inverseStatus.classList.toggle("active", this.inverseMode);
@@ -462,12 +462,15 @@ class Game {
       }
     }
 
-    if (this.powerMode) {
+    if (this.powerMode && !this.splitPowerActive) {
       this.powerTimer -= msPerFrame;
+
       if (this.powerTimer <= 0) {
         this.powerMode = false;
-        this.splitPowerActive = false;
-        this.splitPacmans = [];
+        this.ghosts.forEach((ghost) => {
+          ghost.scared = false;
+          ghost.eaten = false;
+        });
       }
     }
 
@@ -497,12 +500,12 @@ class Game {
 
     // Update Pac-Man or Ghost (inverse mode)
     if (!this.inverseMode) {
-      this.updatePacMan();
-
       if (this.splitPowerActive) {
-        // Ghosts frozen in place while split pac-men hunt them
+        // In split mode: all 4 pac-men are AI-controlled, ghosts are frozen
         this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp));
       } else {
+        // Normal mode: player controls pac-man, ghosts move
+        this.updatePacMan();
         this.ghosts.forEach((ghost) => this.updateGhost(ghost));
       }
 
@@ -666,7 +669,7 @@ class Game {
       const dist = Math.hypot(this.pacman.x - fruit.x, this.pacman.y - fruit.y);
       if (dist < CONFIG.TILE_SIZE) {
         if (fruit.type === "split") {
-          this.splitPowerAvailable = true;
+          this.splitPowerCount++; // Add a power-up to the counter
           this.score += 100;
         } else {
           this.score += fruit.points;
@@ -696,100 +699,122 @@ class Game {
   }
 
   updateSplitPacMan(sp) {
-    const speed = CONFIG.PACMAN_SPEED * 1.15;
-    const target = this.findNearestTargetGhost(sp.x, sp.y);
-    if (!target) return;
+    if (sp.completed) return;
 
-    const centered = this.isEntityCentered(sp, 0.5);
-
-    if (centered) {
-      sp.x = this.getTileCenter(sp.x);
-      sp.y = this.getTileCenter(sp.y);
-
-      sp.direction = this.findPathDirection(
-        sp.x,
-        sp.y,
-        target.x,
-        target.y,
-        sp.direction,
-      );
+    const targetGhost = this.ghosts[sp.targetGhostIndex];
+    if (!targetGhost || targetGhost.eaten) {
+      sp.completed = true;
+      return;
     }
 
-    this.moveEntityInDirection(sp, speed);
+    if (!sp.path || sp.path.length === 0 || sp.pathIndex >= sp.path.length) {
+      this.rebuildSplitPath(sp);
+      if (sp.completed) return;
+    }
+
+    const speed = CONFIG.PACMAN_SPEED * 1.1;
+    const waypoint = sp.path[sp.pathIndex];
+
+    if (!waypoint) {
+      this.rebuildSplitPath(sp);
+      return;
+    }
+
+    const dx = waypoint.x - sp.x;
+    const dy = waypoint.y - sp.y;
+
+    if (Math.abs(dx) <= speed && Math.abs(dy) <= speed) {
+      sp.x = waypoint.x;
+      sp.y = waypoint.y;
+      sp.pathIndex++;
+
+      if (sp.pathIndex >= sp.path.length) {
+        return;
+      }
+    }
+
+    const next = sp.path[sp.pathIndex];
+    if (!next) return;
+
+    if (next.x > sp.x) sp.direction = "right";
+    else if (next.x < sp.x) sp.direction = "left";
+    else if (next.y > sp.y) sp.direction = "down";
+    else if (next.y < sp.y) sp.direction = "up";
+
+    const moved = this.moveEntityInDirection(sp, speed);
+
+    // If blocked, recover instead of freezing
+    if (!moved) {
+      this.rebuildSplitPath(sp);
+      if (sp.completed) return;
+
+      const retry = sp.path[sp.pathIndex];
+      if (!retry) return;
+
+      if (retry.x > sp.x) sp.direction = "right";
+      else if (retry.x < sp.x) sp.direction = "left";
+      else if (retry.y > sp.y) sp.direction = "down";
+      else if (retry.y < sp.y) sp.direction = "up";
+
+      this.moveEntityInDirection(sp, speed);
+    }
+
     this.handleTeleport(sp);
   }
 
   updateGhost(ghost) {
-    if (ghost.isPlayer) return; // Don't update player-controlled ghost in normal mode
+    if (ghost.isPlayer) return;
 
     let target = null;
 
     if (!this.inverseMode) {
-      // Normal mode - handle AI states
-
-      if (ghost.scared) {
-        // Scared mode: run away from pac-man
-        target = this.getOppositePoint(
-          this.pacman.x,
-          this.pacman.y,
-          ghost.x,
-          ghost.y,
-        );
-      } else {
-        // Handle ghost house exit
-        if (ghost.mode === "exitingHouse") {
-          if (ghost.releaseTimer > 0) {
-            ghost.releaseTimer -= 16.67;
-            return;
-          }
-
-          // The centre tile above the house is a wall in this map,
-          // so use a real open lane instead.
-          const leftExit = {
-            x: 8 * CONFIG.TILE_SIZE,
-            y: 6 * CONFIG.TILE_SIZE,
-          };
-
-          const rightExit = {
-            x: 10 * CONFIG.TILE_SIZE,
-            y: 6 * CONFIG.TILE_SIZE,
-          };
-
-          // Pick the nearer reachable exit lane
-          const distLeft = Math.hypot(
-            ghost.x - leftExit.x,
-            ghost.y - leftExit.y,
-          );
-          const distRight = Math.hypot(
-            ghost.x - rightExit.x,
-            ghost.y - rightExit.y,
-          );
-
-          const exitTarget = distLeft <= distRight ? leftExit : rightExit;
-
-          if (Math.hypot(ghost.x - exitTarget.x, ghost.y - exitTarget.y) < 4) {
-            ghost.mode = this.ghostMode;
-            target = this.getGhostTarget(ghost);
-          } else {
-            target = exitTarget;
-          }
+      if (ghost.mode === "exitingHouse") {
+        if (ghost.releaseTimer > 0) {
+          ghost.releaseTimer -= 16.67;
+          return;
         }
 
-        // Always set a target for scatter or chase mode
-        if (ghost.mode === "scatter" || ghost.mode === "chase") {
-          ghost.mode = this.ghostMode;
-          target = this.getGhostTarget(ghost);
+        const speed = ghost.scared
+          ? CONFIG.GHOST_SCARED_SPEED
+          : CONFIG.GHOST_SPEED;
+
+        const leftExit = { x: 8 * CONFIG.TILE_SIZE, y: 6 * CONFIG.TILE_SIZE };
+        const rightExit = { x: 10 * CONFIG.TILE_SIZE, y: 6 * CONFIG.TILE_SIZE };
+
+        const distLeft = Math.abs(ghost.x - leftExit.x);
+        const distRight = Math.abs(ghost.x - rightExit.x);
+        const targetExit = distLeft <= distRight ? leftExit : rightExit;
+
+        if (Math.abs(ghost.x - targetExit.x) > 1) {
+          ghost.direction = ghost.x < targetExit.x ? "right" : "left";
+          this.moveEntityInDirection(ghost, speed);
+          return;
         }
+
+        ghost.x = targetExit.x;
+        ghost.direction = "up";
+
+        if (ghost.y > targetExit.y) {
+          this.moveEntityInDirection(ghost, speed);
+          return;
+        }
+
+        ghost.y = targetExit.y;
+        ghost.mode = this.ghostMode;
       }
+
+      // IMPORTANT:
+      // Blue ghosts should still move using the same roaming/chase logic.
+      // The only difference is that Pac-Man can now eat them.
+      ghost.mode = this.ghostMode;
+      target = this.getGhostTarget(ghost);
     } else {
-      // Inverse mode: ghosts become pac-men chasing the player ghost
       const playerGhost = this.ghosts.find((g) => g.isPlayer);
       if (playerGhost) {
         target = { x: playerGhost.x, y: playerGhost.y };
       }
     }
 
-    // Always move if we have a target
     if (target) {
       this.moveGhostTowards(ghost, target);
     }
@@ -879,6 +904,56 @@ class Game {
     }
 
     return best.dir;
+  }
+
+  getRandomDirection(ghost) {
+    const oppositeDir = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left",
+    };
+
+    let options = this.getAvailableDirections(ghost);
+
+    // avoid immediate reversal unless forced
+    const nonReverse = options.filter(
+      (opt) => opt.dir !== oppositeDir[ghost.direction],
+    );
+
+    if (nonReverse.length > 0) {
+      options = nonReverse;
+    }
+
+    if (options.length === 0) return ghost.direction;
+
+    const choice = options[Math.floor(Math.random() * options.length)];
+    return choice.dir;
+  }
+
+  moveFrightenedGhost(ghost) {
+    const speed = CONFIG.GHOST_SCARED_SPEED;
+    const centered = this.isEntityCentered(ghost, 0.5);
+
+    if (centered) {
+      ghost.x = this.getTileCenter(ghost.x);
+      ghost.y = this.getTileCenter(ghost.y);
+
+      const available = this.getAvailableDirections(ghost);
+      const canContinue = available.some((d) => d.dir === ghost.direction);
+
+      // At junctions, dead ends, or if blocked, pick a random valid direction
+      if (available.length >= 3 || available.length === 1 || !canContinue) {
+        ghost.direction = this.getRandomDirection(ghost);
+      }
+    }
+
+    const moved = this.moveEntityInDirection(ghost, speed);
+
+    if (!moved) {
+      ghost.direction = this.getRandomDirection(ghost);
+      this.moveEntityInDirection(ghost, speed);
+    }
   }
 
   moveEntityInDirection(entity, speed) {
@@ -982,22 +1057,46 @@ class Game {
       }
 
       case "orange": {
-        // Clyde: chase when far, scatter when near
-        const dist = Math.hypot(
-          this.pacman.x - ghost.x,
-          this.pacman.y - ghost.y,
+        // Chase Pac-Man, but only aim 2 tiles ahead for a looser feel
+        const targetTile = this.clampTargetToMap(
+          this.getTileInFrontOfPacman(2),
         );
-
-        if (dist > CONFIG.TILE_SIZE * 8) {
-          return { x: this.pacman.x, y: this.pacman.y };
-        } else {
-          return this.tileToPixels(ghost.scatterTarget);
-        }
+        return this.tileToPixels(targetTile);
       }
 
       default:
         return { x: this.pacman.x, y: this.pacman.y };
     }
+  }
+
+  getFrightenedTarget(ghost) {
+    // Safety check
+    if (!this.pacman) {
+      return { x: ghost.x, y: ghost.y - 100 }; // Just move up as fallback
+    }
+
+    const corners = [
+      { x: 1, y: 1 },
+      { x: this.map[0].length - 2, y: 1 },
+      { x: 1, y: this.map.length - 2 },
+      { x: this.map[0].length - 2, y: this.map.length - 2 },
+    ];
+
+    let bestCorner = corners[0];
+    let bestDist = -1;
+
+    for (const corner of corners) {
+      const px = corner.x * CONFIG.TILE_SIZE;
+      const py = corner.y * CONFIG.TILE_SIZE;
+      const dist = Math.hypot(px - this.pacman.x, py - this.pacman.y);
+
+      if (dist > bestDist) {
+        bestDist = dist;
+        bestCorner = corner;
+      }
+    }
+
+    return this.tileToPixels(bestCorner);
   }
 
   toGrid(x, y) {
@@ -1023,6 +1122,52 @@ class Game {
     ];
 
     return dirs.filter((d) => this.isWalkableTile(d.x, d.y));
+  }
+
+  findPath(startX, startY, targetX, targetY) {
+    const start = this.toGrid(startX, startY);
+    const target = this.toGrid(targetX, targetY);
+
+    const queue = [start];
+    const visited = new Set([`${start.x},${start.y}`]);
+    const parent = new Map();
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      if (current.x === target.x && current.y === target.y) {
+        break;
+      }
+
+      for (const next of this.getTileNeighbors(current)) {
+        const key = `${next.x},${next.y}`;
+        if (!visited.has(key)) {
+          visited.add(key);
+          parent.set(key, current);
+          queue.push({ x: next.x, y: next.y });
+        }
+      }
+    }
+
+    const targetKey = `${target.x},${target.y}`;
+    if (!visited.has(targetKey)) {
+      return [];
+    }
+
+    const path = [];
+    let step = target;
+
+    while (!(step.x === start.x && step.y === start.y)) {
+      path.push({
+        x: step.x * CONFIG.TILE_SIZE,
+        y: step.y * CONFIG.TILE_SIZE,
+      });
+      step = parent.get(`${step.x},${step.y}`);
+      if (!step) return [];
+    }
+
+    path.reverse();
+    return path;
   }
 
   findPathDirection(startX, startY, targetX, targetY, currentDirection = "up") {
@@ -1078,36 +1223,28 @@ class Game {
   moveGhostTowards(ghost, target) {
     const speed = ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED;
 
-    const centered = this.isEntityCentered(ghost, 0.5);
+    const centered = this.isEntityCentered(ghost, 0.1);
 
     if (centered) {
       ghost.x = this.getTileCenter(ghost.x);
       ghost.y = this.getTileCenter(ghost.y);
 
-      ghost.direction = this.findPathDirection(
-        ghost.x,
-        ghost.y,
-        target.x,
-        target.y,
-        ghost.direction,
-      );
+      const available = this.getAvailableDirections(ghost);
+      const canContinue = available.some((d) => d.dir === ghost.direction);
+
+      if (available.length >= 3 || available.length === 1 || !canContinue) {
+        ghost.direction = this.chooseGhostDirection(ghost, target);
+      }
     }
 
     const moved = this.moveEntityInDirection(ghost, speed);
 
     if (!moved) {
-      ghost.x = this.getTileCenter(ghost.x);
-      ghost.y = this.getTileCenter(ghost.y);
-
-      ghost.direction = this.findPathDirection(
-        ghost.x,
-        ghost.y,
-        target.x,
-        target.y,
-        ghost.direction,
-      );
-
-      this.moveEntityInDirection(ghost, speed);
+      const available = this.getAvailableDirections(ghost);
+      if (available.length > 0) {
+        ghost.direction = this.chooseGhostDirection(ghost, target);
+        this.moveEntityInDirection(ghost, speed);
+      }
     }
   }
 
@@ -1262,67 +1399,202 @@ class Game {
     });
   }
 
+  findSplitSpawnPosition(baseX, baseY, preferredDirection) {
+    const start = this.toGrid(baseX, baseY);
+    const queue = [start];
+    const visited = new Set([`${start.x},${start.y}`]);
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+
+      const px = current.x * CONFIG.TILE_SIZE;
+      const py = current.y * CONFIG.TILE_SIZE;
+
+      const occupied = this.splitPacmans.some(
+        (sp) => Math.abs(sp.x - px) < 1 && Math.abs(sp.y - py) < 1,
+      );
+
+      if (this.isWalkableTile(current.x, current.y) && !occupied) {
+        let direction = preferredDirection;
+
+        if (current.x < start.x) direction = "left";
+        else if (current.x > start.x) direction = "right";
+        else if (current.y < start.y) direction = "up";
+        else if (current.y > start.y) direction = "down";
+
+        return { x: px, y: py, direction };
+      }
+
+      const neighbors = [
+        { x: current.x, y: current.y - 1 },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x - 1, y: current.y },
+        { x: current.x + 1, y: current.y },
+      ];
+
+      for (const n of neighbors) {
+        const key = `${n.x},${n.y}`;
+        if (
+          !visited.has(key) &&
+          n.x >= 0 &&
+          n.x < this.map[0].length &&
+          n.y >= 0 &&
+          n.y < this.map.length
+        ) {
+          visited.add(key);
+          queue.push(n);
+        }
+      }
+    }
+
+    return {
+      x: this.pacman.x,
+      y: this.pacman.y,
+      direction: preferredDirection,
+    };
+  }
+
+  rebuildSplitPath(sp) {
+    const ghost = this.ghosts[sp.targetGhostIndex];
+    if (!ghost || ghost.eaten) {
+      sp.completed = true;
+      return;
+    }
+
+    // Snap to nearest grid center before rebuilding
+    sp.x = this.getTileCenter(sp.x);
+    sp.y = this.getTileCenter(sp.y);
+
+    sp.path = this.findPath(sp.x, sp.y, ghost.x, ghost.y);
+    sp.pathIndex = 0;
+
+    if (!sp.path || sp.path.length === 0) {
+      // Last resort: relocate to a nearby valid tile and try again
+      const spawn = this.findSplitSpawnPosition(sp.x, sp.y, sp.direction);
+      sp.x = spawn.x;
+      sp.y = spawn.y;
+      sp.direction = spawn.direction;
+      sp.path = this.findPath(sp.x, sp.y, ghost.x, ghost.y);
+      sp.pathIndex = 0;
+    }
+
+    if (!sp.path || sp.path.length === 0) {
+      sp.completed = true;
+    }
+  }
+
+  respawnGhostInHouse(ghost, index) {
+    const ghostPositions = [
+      { x: 8, y: 7, delay: 0 },
+      { x: 9, y: 7, delay: 3000 },
+      { x: 10, y: 7, delay: 6000 },
+      { x: 9, y: 7, delay: 9000 },
+    ];
+
+    ghost.x = ghostPositions[index].x * CONFIG.TILE_SIZE;
+    ghost.y = ghostPositions[index].y * CONFIG.TILE_SIZE;
+    ghost.scared = false;
+    ghost.eaten = false;
+    ghost.mode = "exitingHouse";
+    ghost.releaseTimer = ghostPositions[index].delay;
+    ghost.direction = "up";
+  }
+
   activateSplitPower() {
-    if (!this.splitPowerActive && this.splitPowerAvailable && this.powerMode) {
+    if (!this.splitPowerActive && this.splitPowerCount > 0 && this.powerMode) {
       this.splitPowerActive = true;
-      this.splitPowerAvailable = false;
+      this.splitPowerCount--;
       this.soundManager.playSplitPower();
 
-      // Freeze and mark ghosts as edible targets
+      // Freeze ghosts in place and make them edible
       this.ghosts.forEach((ghost) => {
-        if (!ghost.eaten) {
-          ghost.scared = true;
-        }
+        ghost.scared = true;
+        ghost.eaten = false;
       });
 
       this.splitPacmans = [];
 
-      // 3 clones + original = 4 total pac-men active
-      const spawnOffsets = [
-        { x: -CONFIG.TILE_SIZE, y: 0, direction: "left" },
-        { x: CONFIG.TILE_SIZE, y: 0, direction: "right" },
-        { x: 0, y: -CONFIG.TILE_SIZE, direction: "up" },
+      const desiredSpawns = [
+        {
+          x: this.pacman.x,
+          y: this.pacman.y,
+          direction: this.pacman.direction,
+        },
+        {
+          x: this.pacman.x - CONFIG.TILE_SIZE,
+          y: this.pacman.y,
+          direction: "left",
+        },
+        {
+          x: this.pacman.x + CONFIG.TILE_SIZE,
+          y: this.pacman.y,
+          direction: "right",
+        },
+        {
+          x: this.pacman.x,
+          y: this.pacman.y - CONFIG.TILE_SIZE,
+          direction: "up",
+        },
       ];
 
-      for (const offset of spawnOffsets) {
-        const clone = {
-          x: this.pacman.x + offset.x,
-          y: this.pacman.y + offset.y,
-          direction: offset.direction,
-        };
+      for (let i = 0; i < this.ghosts.length; i++) {
+        const spawn = this.findSplitSpawnPosition(
+          desiredSpawns[i].x,
+          desiredSpawns[i].y,
+          desiredSpawns[i].direction,
+        );
 
-        if (this.canMove(clone.x, clone.y)) {
-          this.splitPacmans.push(clone);
-        } else {
-          this.splitPacmans.push({
-            x: this.pacman.x,
-            y: this.pacman.y,
-            direction: offset.direction,
-          });
-        }
+        const targetGhost = this.ghosts[i];
+        const path = this.findPath(
+          spawn.x,
+          spawn.y,
+          targetGhost.x,
+          targetGhost.y,
+        );
+
+        this.splitPacmans.push({
+          x: this.getTileCenter(spawn.x),
+          y: this.getTileCenter(spawn.y),
+          direction: spawn.direction,
+          targetGhostIndex: i,
+          path,
+          pathIndex: 0,
+          completed: false,
+        });
       }
     }
   }
 
   checkCollisions() {
-    // Check pac-man collision with ghosts
-    this.checkEntityGhostCollision(this.pacman);
-
-    // Check split pac-mans collision with ghosts
-    this.splitPacmans.forEach((sp) => this.checkEntityGhostCollision(sp));
-
-    // End split mode when all ghosts are eaten
     if (this.splitPowerActive) {
-      const remainingGhosts = this.ghosts.filter((g) => !g.eaten);
+      for (const sp of this.splitPacmans) {
+        if (sp.completed) continue;
 
-      if (remainingGhosts.length === 0) {
+        const ghost = this.ghosts[sp.targetGhostIndex];
+        if (!ghost || ghost.eaten) continue;
+
+        const dist = Math.hypot(sp.x - ghost.x, sp.y - ghost.y);
+        if (dist < CONFIG.TILE_SIZE * 0.8) {
+          ghost.eaten = true;
+          sp.completed = true;
+          this.score += 200;
+          this.soundManager.playEatGhost();
+        }
+      }
+
+      const allCompleted = this.splitPacmans.every((sp) => sp.completed);
+
+      if (allCompleted) {
         this.splitPowerActive = false;
         this.splitPacmans = [];
         this.powerMode = false;
-        this.ghosts.forEach((g) => {
-          g.scared = false;
+
+        this.ghosts.forEach((ghost, i) => {
+          this.respawnGhostInHouse(ghost, i);
         });
       }
+    } else {
+      this.checkEntityGhostCollision(this.pacman);
     }
   }
 
@@ -1363,15 +1635,11 @@ class Game {
   }
 
   respawnGhost(ghost) {
+    if (this.splitPowerActive) return;
+
     setTimeout(() => {
-      // Respawn in ghost house
-      ghost.x = 9 * CONFIG.TILE_SIZE;
-      ghost.y = 7 * CONFIG.TILE_SIZE;
-      ghost.scared = false;
-      ghost.eaten = false;
-      ghost.mode = "exitingHouse";
-      ghost.releaseTimer = 1000; // Wait 1 second before leaving house
-      ghost.direction = "up"; // Reset direction
+      const index = this.ghosts.indexOf(ghost);
+      this.respawnGhostInHouse(ghost, index >= 0 ? index : 0);
     }, 2000);
   }
 
@@ -1387,19 +1655,20 @@ class Game {
 
       // Reset ghost positions to ghost house
       const ghostPositions = [
-        { x: 8, y: 7 }, // Blinky
-        { x: 9, y: 7 }, // Pinky
-        { x: 10, y: 7 }, // Inky
-        { x: 9, y: 9 }, // Clyde
+        { x: 8, y: 7, delay: 0 },
+        { x: 9, y: 7, delay: 3000 },
+        { x: 10, y: 7, delay: 6000 },
+        { x: 9, y: 7, delay: 9000 },
       ];
 
       this.ghosts.forEach((ghost, i) => {
         ghost.x = ghostPositions[i].x * CONFIG.TILE_SIZE;
         ghost.y = ghostPositions[i].y * CONFIG.TILE_SIZE;
         ghost.scared = false;
-        ghost.mode = "scatter"; // Start in scatter mode after respawn
-        ghost.releaseTimer = 0; // Release immediately after death
-        ghost.direction = "up"; // Reset direction
+        ghost.eaten = false;
+        ghost.mode = "exitingHouse";
+        ghost.releaseTimer = ghostPositions[i].delay;
+        ghost.direction = "up";
       });
 
       this.powerMode = false;
@@ -1429,13 +1698,7 @@ class Game {
 
           let fruit = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
 
-          // Split power only if available at this level
-          if (
-            fruit.type === "split" &&
-            this.level < CONFIG.SPLIT_LEVEL_THRESHOLD
-          ) {
-            fruit = fruitTypes[0];
-          }
+          // Split power is now available on all levels, no restriction needed
 
           this.fruits.push({
             x: x * CONFIG.TILE_SIZE,
@@ -1550,15 +1813,15 @@ class Game {
 
     // Draw Pac-Man or Player Ghost (inverse mode)
     if (!this.inverseMode) {
-      this.drawPacMan(this.pacman);
-
-      // Draw split pac-mans
-      this.splitPacmans.forEach((sp) => {
-        this.ctx.save();
-        this.ctx.globalAlpha = 0.7;
-        this.drawPacMan(sp);
-        this.ctx.restore();
-      });
+      if (this.splitPowerActive) {
+        // In split mode: draw all 4 AI-controlled pac-mens
+        this.splitPacmans.forEach((sp) => {
+          this.drawPacMan(sp);
+        });
+      } else {
+        // Normal mode: draw player-controlled pac-man
+        this.drawPacMan(this.pacman);
+      }
     }
 
     // Draw ghosts
