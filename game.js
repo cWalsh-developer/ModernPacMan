@@ -341,6 +341,10 @@ class Game {
     this.splitPowerActive = false;
     this.fruitSpawnTimer = 0;
 
+    // Ghost mode system
+    this.ghostMode = "scatter";
+    this.ghostModeTimer = 7000;
+
     // Determine level features
     this.randomTeleport = this.level >= CONFIG.TELEPORT_LEVEL_THRESHOLD;
     this.splitPowerAvailable = this.level >= CONFIG.SPLIT_LEVEL_THRESHOLD;
@@ -442,6 +446,22 @@ class Game {
   update() {
     // Update timers (using milliseconds for timers)
     const msPerFrame = 16.67; // ~60fps
+
+    // Ghost mode alternation
+    if (!this.powerMode && !this.inverseMode && !this.splitPowerActive) {
+      this.ghostModeTimer -= msPerFrame;
+
+      if (this.ghostModeTimer <= 0) {
+        if (this.ghostMode === "scatter") {
+          this.ghostMode = "chase";
+          this.ghostModeTimer = 20000;
+        } else {
+          this.ghostMode = "scatter";
+          this.ghostModeTimer = 7000;
+        }
+      }
+    }
+
     if (this.powerMode) {
       this.powerTimer -= msPerFrame;
       if (this.powerTimer <= 0) {
@@ -748,8 +768,8 @@ class Game {
           const exitTarget = distLeft <= distRight ? leftExit : rightExit;
 
           if (Math.hypot(ghost.x - exitTarget.x, ghost.y - exitTarget.y) < 4) {
-            ghost.mode = "chase";
-            target = { x: this.pacman.x, y: this.pacman.y };
+            ghost.mode = this.ghostMode;
+            target = this.getGhostTarget(ghost);
           } else {
             target = exitTarget;
           }
@@ -757,16 +777,8 @@ class Game {
 
         // Always set a target for scatter or chase mode
         if (ghost.mode === "scatter" || ghost.mode === "chase") {
-          // Calculate distance to Pac-Man
-          const distToPacman = Math.hypot(
-            this.pacman.x - ghost.x,
-            this.pacman.y - ghost.y,
-          );
-
-          // Always chase Pac-Man (simplified AI)
-          // In original Pac-Man, ghosts have different personalities, but for now just chase
-          ghost.mode = "chase";
-          target = { x: this.pacman.x, y: this.pacman.y };
+          ghost.mode = this.ghostMode;
+          target = this.getGhostTarget(ghost);
         }
       }
     } else {
@@ -885,6 +897,107 @@ class Game {
     }
 
     return false;
+  }
+
+  getPacmanTile() {
+    return {
+      x: this.toGrid(this.pacman.x, this.pacman.y).x,
+      y: this.toGrid(this.pacman.x, this.pacman.y).y,
+    };
+  }
+
+  getGhostByName(name) {
+    return this.ghosts.find((g) => g.name === name);
+  }
+
+  getTileInFrontOfPacman(tilesAhead = 4) {
+    const pac = this.getPacmanTile();
+    let x = pac.x;
+    let y = pac.y;
+
+    if (this.pacman.direction === "up") y -= tilesAhead;
+    if (this.pacman.direction === "down") y += tilesAhead;
+    if (this.pacman.direction === "left") x -= tilesAhead;
+    if (this.pacman.direction === "right") x += tilesAhead;
+
+    return { x, y };
+  }
+
+  clampTargetToMap(tile) {
+    return {
+      x: Math.max(0, Math.min(this.map[0].length - 1, tile.x)),
+      y: Math.max(0, Math.min(this.map.length - 1, tile.y)),
+    };
+  }
+
+  tileToPixels(tile) {
+    return {
+      x: tile.x * CONFIG.TILE_SIZE,
+      y: tile.y * CONFIG.TILE_SIZE,
+    };
+  }
+
+  getGhostTarget(ghost) {
+    const pacTile = this.getPacmanTile();
+
+    // scatter mode = corner patrol
+    if (this.ghostMode === "scatter") {
+      return this.tileToPixels(ghost.scatterTarget);
+    }
+
+    // frightened/scared handled elsewhere, so this is chase logic
+    switch (ghost.name) {
+      case "red": {
+        // Blinky: direct chase
+        return { x: this.pacman.x, y: this.pacman.y };
+      }
+
+      case "pink": {
+        // Pinky: ambush 4 tiles ahead
+        const targetTile = this.clampTargetToMap(
+          this.getTileInFrontOfPacman(4),
+        );
+        return this.tileToPixels(targetTile);
+      }
+
+      case "cyan": {
+        // Inky-inspired: vector from Blinky to 2 tiles ahead of Pac-Man, doubled
+        const blinky = this.getGhostByName("red");
+        const front = this.getTileInFrontOfPacman(2);
+
+        if (!blinky) {
+          return this.tileToPixels(this.clampTargetToMap(front));
+        }
+
+        const blinkyTile = this.toGrid(blinky.x, blinky.y);
+        const vx = front.x - blinkyTile.x;
+        const vy = front.y - blinkyTile.y;
+
+        const targetTile = this.clampTargetToMap({
+          x: front.x + vx,
+          y: front.y + vy,
+        });
+
+        return this.tileToPixels(targetTile);
+      }
+
+      case "orange": {
+        // Clyde: chase when far, scatter when near
+        const dist = Math.hypot(
+          this.pacman.x - ghost.x,
+          this.pacman.y - ghost.y,
+        );
+
+        if (dist > CONFIG.TILE_SIZE * 8) {
+          return { x: this.pacman.x, y: this.pacman.y };
+        } else {
+          return this.tileToPixels(ghost.scatterTarget);
+        }
+      }
+
+      default:
+        return { x: this.pacman.x, y: this.pacman.y };
+    }
   }
 
   toGrid(x, y) {
