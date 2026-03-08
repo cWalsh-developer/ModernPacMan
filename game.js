@@ -787,6 +787,7 @@ class Game {
 
   updateGhost(ghost) {
     if (ghost.isPlayer) return;
+    if (ghost.eaten) return; // Don't update eaten ghosts while they're waiting to respawn
 
     let target = null;
 
@@ -1659,6 +1660,8 @@ class Game {
 
   checkEntityGhostCollision(entity) {
     for (let ghost of this.ghosts) {
+      if (ghost.eaten) continue; // Skip collision with eaten ghosts
+
       const dist = Math.hypot(entity.x - ghost.x, entity.y - ghost.y);
       if (dist < CONFIG.TILE_SIZE * 0.8) {
         if (ghost.scared && !ghost.eaten) {
@@ -1680,7 +1683,7 @@ class Game {
     if (!playerGhost) return;
 
     for (let ghost of this.ghosts) {
-      if (!ghost.isPlayer) {
+      if (!ghost.isPlayer && !ghost.eaten) {
         const dist = Math.hypot(
           playerGhost.x - ghost.x,
           playerGhost.y - ghost.y,
@@ -1703,9 +1706,25 @@ class Game {
   respawnGhost(ghost) {
     if (this.splitPowerActive) return;
 
+    // Immediately move ghost to house and mark as eaten
+    const index = this.ghosts.indexOf(ghost);
+    const ghostPositions = [
+      { x: 8, y: 7 },
+      { x: 9, y: 7 },
+      { x: 10, y: 7 },
+      { x: 9, y: 7 },
+    ];
+
+    ghost.x = ghostPositions[index >= 0 ? index : 0].x * CONFIG.TILE_SIZE;
+    ghost.y = ghostPositions[index >= 0 ? index : 0].y * CONFIG.TILE_SIZE;
+    ghost.mode = "exitingHouse";
+    ghost.direction = "up";
+
+    // After 2 seconds, allow the ghost to exit and reset eaten status
     setTimeout(() => {
-      const index = this.ghosts.indexOf(ghost);
-      this.respawnGhostInHouse(ghost, index >= 0 ? index : 0);
+      ghost.eaten = false;
+      ghost.scared = false;
+      ghost.releaseTimer = 0;
     }, 2000);
   }
 
