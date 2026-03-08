@@ -360,6 +360,8 @@ class Game {
     this.lives = 3;
     this.gameOver = false;
     this.gameStarted = false;
+    this.splitPowerCount = 1;
+    this.teleportPowerCount = 1;
     this.resetLevel();
     this.showMessage("READY!", "Press any key to start");
   }
