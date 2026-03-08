@@ -241,6 +241,7 @@ class Game {
     this.inverseModeTimer = 0;
     this.splitPowerCount = 1; // Start with 1 power-up by default
     this.splitPowerActive = false;
+    this.teleportPowerCount = 1; // Start with 1 teleport by default
     this.randomTeleport = false;
 
     this.fruitSpawnTimer = 0;
@@ -280,6 +281,11 @@ class Game {
         !this.inverseMode
       ) {
         this.activateSplitPower();
+        e.preventDefault();
+      }
+
+      if (e.key === "Shift" && this.teleportPowerCount > 0) {
+        this.activateTeleportPower();
         e.preventDefault();
       }
 
@@ -409,11 +415,9 @@ class Game {
       : "OFF";
 
     const teleportStatus = document.getElementById("teleportMode");
-    teleportStatus.classList.toggle("active", this.randomTeleport);
-    teleportStatus.querySelector(".power-value").textContent = this
-      .randomTeleport
-      ? "RANDOM"
-      : "NORMAL";
+    teleportStatus.classList.toggle("active", this.teleportPowerCount > 0);
+    teleportStatus.querySelector(".power-value").textContent =
+      `x${this.teleportPowerCount}`;
   }
 
   gameLoop(currentTime = 0) {
@@ -671,6 +675,9 @@ class Game {
         if (fruit.type === "split") {
           this.splitPowerCount++; // Add a power-up to the counter
           this.score += 100;
+        } else if (fruit.type === "teleport") {
+          this.teleportPowerCount++; // Add a teleport to the counter
+          this.score += 150;
         } else {
           this.score += fruit.points;
         }
@@ -1483,6 +1490,33 @@ class Game {
     }
   }
 
+  activateTeleportPower() {
+    if (this.teleportPowerCount > 0 && !this.splitPowerActive) {
+      this.teleportPowerCount--;
+      this.soundManager.playTeleport();
+
+      // Find all valid walkable positions
+      let validPositions = [];
+      for (let y = 0; y < this.map.length; y++) {
+        for (let x = 0; x < this.map[y].length; x++) {
+          if (this.map[y][x] !== 1) {
+            validPositions.push({
+              x: x * CONFIG.TILE_SIZE,
+              y: y * CONFIG.TILE_SIZE,
+            });
+          }
+        }
+      }
+
+      if (validPositions.length > 0) {
+        const pos =
+          validPositions[Math.floor(Math.random() * validPositions.length)];
+        this.pacman.x = pos.x;
+        this.pacman.y = pos.y;
+      }
+    }
+  }
+
   respawnGhostInHouse(ghost, index) {
     const ghostPositions = [
       { x: 8, y: 7, delay: 0 },
@@ -1694,6 +1728,7 @@ class Game {
             { type: "orange", points: 500, color: "#FFA500" },
             { type: "cherry", points: 200, color: "#FF1493" },
             { type: "split", points: 100, color: "#00FF00" },
+            { type: "teleport", points: 150, color: "#00FFFF" },
           ];
 
           let fruit = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
@@ -1808,6 +1843,12 @@ class Game {
         this.ctx.fillStyle = "#000";
         this.ctx.font = "10px Arial";
         this.ctx.fillText("S", fruit.x + 6, fruit.y + 13);
+      }
+
+      if (fruit.type === "teleport") {
+        this.ctx.fillStyle = "#000";
+        this.ctx.font = "10px Arial";
+        this.ctx.fillText("T", fruit.x + 6, fruit.y + 13);
       }
     });
 
