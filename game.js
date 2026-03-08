@@ -8,7 +8,6 @@ const CONFIG = {
   INVERSE_DURATION: 15000,
   FRUIT_SPAWN_TIME: 10000,
   FRUIT_DURATION: 8000,
-  TELEPORT_LEVEL_THRESHOLD: 3,
   INVERSE_LEVEL_THRESHOLD: 5,
   SPLIT_LEVEL_THRESHOLD: 2,
 };
@@ -239,6 +238,7 @@ class Game {
     this.powerTimer = 0;
     this.inverseMode = false;
     this.inverseModeTimer = 0;
+    this.inverseGraceTimer = 0;
     this.splitPowerCount = 1; // Start with 1 power-up by default
     this.splitPowerActive = false;
     this.teleportPowerCount = 1; // Start with 1 teleport by default
@@ -350,10 +350,6 @@ class Game {
     // Ghost mode system
     this.ghostMode = "scatter";
     this.ghostModeTimer = 7000;
-
-    // Determine level features
-    this.randomTeleport = this.level >= CONFIG.TELEPORT_LEVEL_THRESHOLD;
-    // Split power is now available on all levels, no level check needed
 
     this.updateUI();
   }
@@ -482,7 +478,18 @@ class Game {
       this.inverseModeTimer -= msPerFrame;
       if (this.inverseModeTimer <= 0) {
         this.inverseMode = false;
-        this.ghosts.forEach((g) => (g.scared = false));
+        this.inverseGraceTimer = 0;
+        this.ghosts.forEach((g) => {
+          g.scared = false;
+          g.isPlayer = false;
+        });
+      }
+    }
+
+    if (this.inverseGraceTimer > 0) {
+      this.inverseGraceTimer -= msPerFrame;
+      if (this.inverseGraceTimer < 0) {
+        this.inverseGraceTimer = 0;
       }
     }
 
@@ -507,14 +514,21 @@ class Game {
       if (this.splitPowerActive) {
         // In split mode: all 4 pac-men are AI-controlled, ghosts are frozen
         this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp));
+        this.checkCollisions();
       } else {
-        // Normal mode: player controls pac-man, ghosts move
+        // Normal mode: player controls pac-man
         this.updatePacMan();
-        this.ghosts.forEach((ghost) => this.updateGhost(ghost));
-      }
 
-      // Check collisions
-      this.checkCollisions();
+        // If inverse mode was triggered during updatePacMan(),
+        // stop normal processing immediately so we don't instantly collide
+        if (this.inverseMode) {
+          this.updateUI();
+          return;
+        }
+
+        this.ghosts.forEach((ghost) => this.updateGhost(ghost));
+        this.checkCollisions();
+      }
     } else {
       // Inverse mode: control ghost, pac-mans chase
       this.updatePlayerGhost();
@@ -1391,19 +1405,28 @@ class Game {
     this.inverseMode = true;
     this.inverseModeTimer = CONFIG.INVERSE_DURATION;
 
-    // Transform pac-man to ghost
+    // brief grace period so transformation cannot instantly kill the player
+    this.inverseGraceTimer = 1000;
+
+    // Store Pac-Man's exact current position/direction
+    const pacmanX = this.pacman.x;
+    const pacmanY = this.pacman.y;
+    const pacmanDir = this.pacman.direction;
+
+    // Clear any previous player flags
+    this.ghosts.forEach((ghost) => {
+      ghost.isPlayer = false;
+      ghost.scared = false;
+      ghost.eaten = false;
+    });
+
+    // Use the first ghost object as the player avatar, but place it exactly
+    // where Pac-Man currently is so control continues from that location
     const playerGhost = this.ghosts[0];
     playerGhost.isPlayer = true;
-    playerGhost.x = this.pacman.x;
-    playerGhost.y = this.pacman.y;
-    playerGhost.scared = false;
-
-    // Other ghosts become pac-men chasers
-    this.ghosts.forEach((ghost) => {
-      if (!ghost.isPlayer) {
-        ghost.scared = false;
-      }
-    });
+    playerGhost.x = pacmanX;
+    playerGhost.y = pacmanY;
+    playerGhost.direction = pacmanDir;
   }
 
   findSplitSpawnPosition(baseX, baseY, preferredDirection) {
@@ -1649,6 +1672,8 @@ class Game {
   }
 
   checkInverseCollisions() {
+    if (this.inverseGraceTimer > 0) return;
+
     const playerGhost = this.ghosts.find((g) => g.isPlayer);
     if (!playerGhost) return;
 
@@ -1658,10 +1683,15 @@ class Game {
           playerGhost.x - ghost.x,
           playerGhost.y - ghost.y,
         );
+
         if (dist < CONFIG.TILE_SIZE * 0.8) {
           this.inverseMode = false;
           this.inverseModeTimer = 0;
-          this.ghosts.forEach((g) => (g.isPlayer = false));
+          this.inverseGraceTimer = 0;
+          this.ghosts.forEach((g) => {
+            g.isPlayer = false;
+            g.scared = false;
+          });
           return;
         }
       }
