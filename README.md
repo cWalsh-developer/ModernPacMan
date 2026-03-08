@@ -128,4 +128,4 @@ Recommended browsers: Chrome, Firefox, Edge, Safari (latest versions)
 - Watch the power-up indicators at the top to track your available charges (x1, x2, etc.)
 - Practice moving through tight spaces to evade ghosts effectively
 
-Enjoy the game!
+Enjoy the game here: https://cwalsh-developer.github.io/ModernPacMan/ 
