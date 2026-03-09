@@ -98,6 +98,7 @@ body {
 .power-status.active .power-value {
     color: #00ff00;
     background: rgba(0, 255, 0, 0.2);
+    text-shadow: 0 0 10px rgba(0, 255, 0, 0.8);
     animation: pulse 1s infinite;
 }
 

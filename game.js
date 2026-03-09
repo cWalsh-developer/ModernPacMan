@@ -395,10 +395,7 @@ class Game {
 
     // Update power-up status
     const splitStatus = document.getElementById("splitPowerStatus");
-    splitStatus.classList.toggle(
-      "active",
-      this.splitPowerCount > 0 && this.powerMode,
-    );
+    splitStatus.classList.toggle("active", this.splitPowerCount > 0);
     splitStatus.querySelector(".power-value").textContent =
       this.splitPowerCount > 0
         ? this.powerMode
