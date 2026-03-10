@@ -266,6 +266,11 @@ class Game {
 
   setupEventListeners() {
     document.addEventListener("keydown", (e) => {
+      // Prevent default behavior for arrow keys to stop page scrolling
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+      }
+
       if (!this.gameStarted) {
         this.gameStarted = true;
         this.hideMessage();
@@ -303,6 +308,10 @@ class Game {
     });
 
     document.addEventListener("keyup", (e) => {
+      // Prevent default behavior for arrow keys to stop page scrolling
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
+        e.preventDefault();
+      }
       this.keys[e.key] = false;
     });
   }
