@@ -1591,10 +1591,11 @@ class Game {
       this.splitPowerCount--;
       this.soundManager.playSplitPower();
 
-      // Freeze ghosts in place and make them edible
+      // Make only non-eaten ghosts scared (don't respawn eaten ghosts)
       this.ghosts.forEach((ghost) => {
-        ghost.scared = true;
-        ghost.eaten = false;
+        if (!ghost.eaten) {
+          ghost.scared = true;
+        }
       });
 
       this.splitPacmans = [];
@@ -1622,14 +1623,21 @@ class Game {
         },
       ];
 
+      // Only create split Pac-Men for ghosts that aren't already eaten
+      let spawnIndex = 0;
       for (let i = 0; i < this.ghosts.length; i++) {
-        const spawn = this.findSplitSpawnPosition(
-          desiredSpawns[i].x,
-          desiredSpawns[i].y,
-          desiredSpawns[i].direction,
-        );
-
         const targetGhost = this.ghosts[i];
+        
+        // Skip ghosts that are already eaten
+        if (targetGhost.eaten) continue;
+        
+        const spawn = this.findSplitSpawnPosition(
+          desiredSpawns[spawnIndex].x,
+          desiredSpawns[spawnIndex].y,
+          desiredSpawns[spawnIndex].direction,
+        );
+        spawnIndex++;
+
         const path = this.findPath(
           spawn.x,
           spawn.y,
