@@ -424,6 +424,13 @@ class Game {
       `x${this.teleportPowerCount}`;
   }
 
+  getLevelSpeedMultiplier() {
+    // Increase speed by 8% per level, capped at level 10
+    // Level 1: 1.0x, Level 2: 1.08x, Level 3: 1.16x ... Level 10+: 1.72x
+    const levelForSpeed = Math.min(this.level, 10);
+    return 1 + (levelForSpeed - 1) * 0.08;
+  }
+
   gameLoop(currentTime = 0) {
     // CRITICAL: Always schedule next frame first to keep loop running
     requestAnimationFrame((time) => this.gameLoop(time));
@@ -445,19 +452,22 @@ class Game {
 
     // Always render, but only update if game has started
     if (this.gameStarted && !this.paused && !this.gameOver) {
-      this.update();
+      this.update(deltaTime);
     }
 
     this.render();
   }
 
-  update() {
-    // Update timers (using milliseconds for timers)
-    const msPerFrame = 16.67; // ~60fps
+  update(deltaTime) {
+    // Calculate speed multiplier for frame-rate independence (60fps baseline)
+    // Also apply level-based speed increase (capped at level 10)
+    const baseSpeedMultiplier = deltaTime / 16.67;
+    const levelSpeedMultiplier = this.getLevelSpeedMultiplier();
+    const speedMultiplier = baseSpeedMultiplier * levelSpeedMultiplier;
 
     // Ghost mode alternation
     if (!this.powerMode && !this.inverseMode && !this.splitPowerActive) {
-      this.ghostModeTimer -= msPerFrame;
+      this.ghostModeTimer -= deltaTime;
 
       if (this.ghostModeTimer <= 0) {
         if (this.ghostMode === "scatter") {
@@ -471,7 +481,7 @@ class Game {
     }
 
     if (this.powerMode && !this.splitPowerActive) {
-      this.powerTimer -= msPerFrame;
+      this.powerTimer -= deltaTime;
 
       if (this.powerTimer <= 0) {
         this.powerMode = false;
@@ -483,7 +493,7 @@ class Game {
     }
 
     if (this.inverseMode) {
-      this.inverseModeTimer -= msPerFrame;
+      this.inverseModeTimer -= deltaTime;
       if (this.inverseModeTimer <= 0) {
         this.inverseMode = false;
         this.inverseGraceTimer = 0;
@@ -495,14 +505,14 @@ class Game {
     }
 
     if (this.inverseGraceTimer > 0) {
-      this.inverseGraceTimer -= msPerFrame;
+      this.inverseGraceTimer -= deltaTime;
       if (this.inverseGraceTimer < 0) {
         this.inverseGraceTimer = 0;
       }
     }
 
     // Fruit spawning
-    this.fruitSpawnTimer += msPerFrame;
+    this.fruitSpawnTimer += deltaTime;
     if (
       this.fruitSpawnTimer >= CONFIG.FRUIT_SPAWN_TIME &&
       this.fruits.length === 0
@@ -513,7 +523,7 @@ class Game {
 
     // Update fruits
     this.fruits = this.fruits.filter((fruit) => {
-      fruit.timer -= msPerFrame;
+      fruit.timer -= deltaTime;
       return fruit.timer > 0;
     });
 
@@ -521,11 +531,11 @@ class Game {
     if (!this.inverseMode) {
       if (this.splitPowerActive) {
         // In split mode: all 4 pac-men are AI-controlled, ghosts are frozen
-        this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp));
+        this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp, speedMultiplier));
         this.checkCollisions();
       } else {
         // Normal mode: player controls pac-man
-        this.updatePacMan();
+        this.updatePacMan(speedMultiplier);
 
         // If inverse mode was triggered during updatePacMan(),
         // stop normal processing immediately so we don't instantly collide
@@ -534,15 +544,15 @@ class Game {
           return;
         }
 
-        this.ghosts.forEach((ghost) => this.updateGhost(ghost));
+        this.ghosts.forEach((ghost) => this.updateGhost(ghost, speedMultiplier, deltaTime));
         this.checkCollisions();
       }
     } else {
       // Inverse mode: control ghost, pac-mans chase
-      this.updatePlayerGhost();
+      this.updatePlayerGhost(speedMultiplier);
       this.ghosts
         .filter((g) => !g.isPlayer)
-        .forEach((ghost) => this.updateGhost(ghost));
+        .forEach((ghost) => this.updateGhost(ghost, speedMultiplier, deltaTime));
       this.checkInverseCollisions();
     }
 
