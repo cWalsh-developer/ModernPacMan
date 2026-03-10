@@ -573,10 +573,19 @@ class Game {
 
     // Get desired direction from input
     let desiredDirection = null;
-    if (this.keys["ArrowUp"]) desiredDirection = "up";
-    if (this.keys["ArrowDown"]) desiredDirection = "down";
-    if (this.keys["ArrowLeft"]) desiredDirection = "left";
-    if (this.keys["ArrowRight"]) desiredDirection = "right";
+    if (this.inverseMode) {
+      // Invert controls during inverse mode for extra challenge
+      if (this.keys["ArrowUp"]) desiredDirection = "down";
+      if (this.keys["ArrowDown"]) desiredDirection = "up";
+      if (this.keys["ArrowLeft"]) desiredDirection = "right";
+      if (this.keys["ArrowRight"]) desiredDirection = "left";
+    } else {
+      // Normal controls
+      if (this.keys["ArrowUp"]) desiredDirection = "up";
+      if (this.keys["ArrowDown"]) desiredDirection = "down";
+      if (this.keys["ArrowLeft"]) desiredDirection = "left";
+      if (this.keys["ArrowRight"]) desiredDirection = "right";
+    }
 
     // Always keep Pac-Man aligned on the perpendicular axis to prevent getting stuck
     const alignThreshold = 5; // Increased threshold for better alignment
