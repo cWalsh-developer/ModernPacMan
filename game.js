@@ -1,9 +1,9 @@
 // Game Configuration
 const CONFIG = {
   TILE_SIZE: 20,
-  PACMAN_SPEED: 0.8, // pixels per frame at 60fps (~1.5 tiles/sec - classic feel)
-  GHOST_SPEED: 0.6, // Slower than Pac-Man for fair gameplay
-  GHOST_SCARED_SPEED: 0.4, // Much slower when scared
+  PACMAN_SPEED: 2.5, // pixels per frame at 60fps (faster gameplay)
+  GHOST_SPEED: 2.0, // Slightly slower than Pac-Man for fair gameplay
+  GHOST_SCARED_SPEED: 1.3, // Slower when scared but still threatening
   POWER_DURATION: 10000,
   INVERSE_DURATION: 15000,
   FRUIT_SPAWN_TIME: 10000,
@@ -356,9 +356,9 @@ class Game {
     this.splitPowerActive = false;
     this.fruitSpawnTimer = 0;
 
-    // Ghost mode system
-    this.ghostMode = "scatter";
-    this.ghostModeTimer = 7000;
+    // Ghost mode system - start in chase mode and stay there mostly
+    this.ghostMode = "chase";
+    this.ghostModeTimer = 40000; // Very long chase time
 
     this.updateUI();
   }
@@ -472,10 +472,10 @@ class Game {
       if (this.ghostModeTimer <= 0) {
         if (this.ghostMode === "scatter") {
           this.ghostMode = "chase";
-          this.ghostModeTimer = 20000;
+          this.ghostModeTimer = 40000; // Very long chase time
         } else {
           this.ghostMode = "scatter";
-          this.ghostModeTimer = 7000;
+          this.ghostModeTimer = 2000; // Minimal scatter time
         }
       }
     }
@@ -822,22 +822,51 @@ class Game {
     this.handleTeleport(sp);
   }
 
-  updateGhost(ghost) {
+  updateGhost(ghost, speedMultiplier = 1, deltaTime = 16.67) {
     if (ghost.isPlayer) return;
     if (ghost.eaten) return; // Don't update eaten ghosts while they're waiting to respawn
+
+    // Calculate distance to Pac-Man
+    const distToPacman = Math.hypot(
+      ghost.x - this.pacman.x,
+      ghost.y - this.pacman.y,
+    );
+
+    // Only wander when far from Pac-Man (exploration mode)
+    // When close, always chase aggressively into interior areas
+    const shouldWander = distToPacman > CONFIG.TILE_SIZE * 12;
+
+    if (!this.powerMode && !this.inverseMode && shouldWander) {
+      if (ghost.wandering) {
+        ghost.wanderTimer -= deltaTime;
+        if (ghost.wanderTimer <= 0) {
+          ghost.wandering = false;
+          ghost.nextWanderTime = 10000 + Math.random() * 10000; // Long wait (10-20s)
+        }
+      } else {
+        ghost.nextWanderTime -= deltaTime;
+        if (ghost.nextWanderTime <= 0) {
+          ghost.wandering = true;
+          ghost.wanderTimer = 1500 + Math.random() * 1500; // Brief wander (1.5-3s)
+        }
+      }
+    } else {
+      // Too close to Pac-Man - stop wandering and focus on chase
+      ghost.wandering = false;
+    }
 
     let target = null;
 
     if (!this.inverseMode) {
       if (ghost.mode === "exitingHouse") {
         if (ghost.releaseTimer > 0) {
-          ghost.releaseTimer -= 16.67;
+          ghost.releaseTimer -= deltaTime;
           return;
         }
 
-        const speed = ghost.scared
-          ? CONFIG.GHOST_SCARED_SPEED
-          : CONFIG.GHOST_SPEED;
+        const speed =
+          (ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED) *
+          speedMultiplier;
 
         const leftExit = { x: 8 * CONFIG.TILE_SIZE, y: 6 * CONFIG.TILE_SIZE };
         const rightExit = { x: 10 * CONFIG.TILE_SIZE, y: 6 * CONFIG.TILE_SIZE };
@@ -868,19 +897,139 @@ class Game {
       // Blue ghosts should still move using the same roaming/chase logic.
       // The only difference is that Pac-Man can now eat them.
       ghost.mode = this.ghostMode;
+
+      // If scared, use flee behavior instead of chase
+      if (ghost.scared) {
+        this.moveFrightenedGhost(ghost, speedMultiplier);
+        this.handleTeleport(ghost);
+        return;
+      }
+
+      // If wandering, explore randomly instead of chasing
+      if (ghost.wandering) {
+        this.moveGhostWandering(ghost, speedMultiplier);
+        this.handleTeleport(ghost);
+        return;
+      }
+
       target = this.getGhostTarget(ghost);
     } else {
-      const playerGhost = this.ghosts.find((g) => g.isPlayer);
-      if (playerGhost) {
-        target = { x: playerGhost.x, y: playerGhost.y };
-      }
+      // In inverse mode, all ghosts chase Pac-Man (who is now the "ghost")
+      target = { x: this.pacman.x, y: this.pacman.y };
     }
 
     if (target) {
-      this.moveGhostTowards(ghost, target);
+      this.moveGhostTowards(ghost, target, speedMultiplier);
     }
 
     this.handleTeleport(ghost);
+  }
+
+  moveFrightenedGhost(ghost, speedMultiplier = 1) {
+    const speed = CONFIG.GHOST_SCARED_SPEED * speedMultiplier;
+    const centered = this.isEntityCentered(ghost, 0.1);
+
+    if (centered) {
+      ghost.x = this.getTileCenter(ghost.x);
+      ghost.y = this.getTileCenter(ghost.y);
+
+      // Use BFS to intelligently flee from Pac-Man
+      const fleeTarget = this.getFleeTarget(ghost);
+      if (fleeTarget) {
+        ghost.direction = this.findPathDirection(
+          ghost.x,
+          ghost.y,
+          fleeTarget.x,
+          fleeTarget.y,
+          ghost.direction,
+        );
+      }
+    }
+
+    const moved = this.moveEntityInDirection(ghost, speed);
+
+    if (!moved) {
+      // Stuck - try a different direction
+      const available = this.getAvailableDirections(ghost);
+      if (available.length > 0) {
+        const fleeTarget = this.getFleeTarget(ghost);
+        if (fleeTarget) {
+          ghost.direction = this.findPathDirection(
+            ghost.x,
+            ghost.y,
+            fleeTarget.x,
+            fleeTarget.y,
+            ghost.direction,
+          );
+        }
+        this.moveEntityInDirection(ghost, speed);
+      }
+    }
+  }
+
+  getFleeTarget(ghost) {
+    // Calculate a point far from Pac-Man to flee toward
+    const dx = ghost.x - this.pacman.x;
+    const dy = ghost.y - this.pacman.y;
+    const dist = Math.hypot(dx, dy);
+    
+    if (dist < 1) return null;
+    
+    // Extend the direction vector to create a flee target
+    const fleeX = ghost.x + (dx / dist) * CONFIG.TILE_SIZE * 10;
+    const fleeY = ghost.y + (dy / dist) * CONFIG.TILE_SIZE * 10;
+    
+    return { x: fleeX, y: fleeY };
+  }
+
+  moveGhostWandering(ghost, speedMultiplier = 1) {
+    const speed = CONFIG.GHOST_SPEED * speedMultiplier;
+    const centered = this.isEntityCentered(ghost, 0.1);
+
+    if (centered) {
+      ghost.x = this.getTileCenter(ghost.x);
+      ghost.y = this.getTileCenter(ghost.y);
+
+      const available = this.getAvailableDirections(ghost);
+      const canContinue = available.some((d) => d.dir === ghost.direction);
+
+      // When wandering, make frequent random turns (10% chance) or at junctions
+      if (Math.random() < 0.1 || available.length >= 2 || available.length === 1 || !canContinue) {
+        ghost.direction = this.getRandomDirection(ghost);
+      }
+    }
+
+    const moved = this.moveEntityInDirection(ghost, speed);
+
+    if (!moved) {
+      ghost.direction = this.getRandomDirection(ghost);
+      this.moveEntityInDirection(ghost, speed);
+    }
+  }
+
+  getRandomDirection(ghost) {
+    const oppositeDir = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left",
+    };
+
+    let options = this.getAvailableDirections(ghost);
+
+    // Avoid reversing unless there is no other option
+    const nonReverse = options.filter(
+      (opt) => opt.dir !== oppositeDir[ghost.direction],
+    );
+
+    if (nonReverse.length > 0) {
+      options = nonReverse;
+    }
+
+    if (options.length === 0) return ghost.direction;
+
+    const choice = options[Math.floor(Math.random() * options.length)];
+    return choice.dir;
   }
 
   updatePlayerGhost() {
@@ -1326,8 +1475,8 @@ class Game {
     return { x: startX, y: startY };
   }
 
-  moveGhostTowards(ghost, target) {
-    const speed = ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED;
+  moveGhostTowards(ghost, target, speedMultiplier = 1) {
+    const speed = (ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED) * speedMultiplier;
 
     const centered = this.isEntityCentered(ghost, 0.1);
 
@@ -1335,22 +1484,28 @@ class Game {
       ghost.x = this.getTileCenter(ghost.x);
       ghost.y = this.getTileCenter(ghost.y);
 
-      const available = this.getAvailableDirections(ghost);
-      const canContinue = available.some((d) => d.dir === ghost.direction);
-
-      if (available.length >= 3 || available.length === 1 || !canContinue) {
-        ghost.direction = this.chooseGhostDirection(ghost, target);
-      }
+      // Use BFS pathfinding to navigate the entire maze intelligently
+      ghost.direction = this.findPathDirection(
+        ghost.x,
+        ghost.y,
+        target.x,
+        target.y,
+        ghost.direction,
+      );
     }
 
     const moved = this.moveEntityInDirection(ghost, speed);
 
     if (!moved) {
-      const available = this.getAvailableDirections(ghost);
-      if (available.length > 0) {
-        ghost.direction = this.chooseGhostDirection(ghost, target);
-        this.moveEntityInDirection(ghost, speed);
-      }
+      // Stuck - recalculate path
+      ghost.direction = this.findPathDirection(
+        ghost.x,
+        ghost.y,
+        target.x,
+        target.y,
+        ghost.direction,
+      );
+      this.moveEntityInDirection(ghost, speed);
     }
   }
 
@@ -2150,6 +2305,11 @@ class Ghost {
     this.releaseTimer = 0; // Timer before ghost can leave house
     this.direction = "up"; // Current movement direction
     this.lastDirection = "up"; // Track last successful direction
+    
+    // Wandering system for exploration when far from Pac-Man
+    this.wandering = false;
+    this.wanderTimer = 0;
+    this.nextWanderTime = 10000 + Math.random() * 10000; // 10-20s initial wait
   }
 }
 
