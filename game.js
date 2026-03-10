@@ -531,7 +531,9 @@ class Game {
     if (!this.inverseMode) {
       if (this.splitPowerActive) {
         // In split mode: all 4 pac-men are AI-controlled, ghosts are frozen
-        this.splitPacmans.forEach((sp) => this.updateSplitPacMan(sp, speedMultiplier));
+        this.splitPacmans.forEach((sp) =>
+          this.updateSplitPacMan(sp, speedMultiplier),
+        );
         this.checkCollisions();
       } else {
         // Normal mode: player controls pac-man
@@ -544,7 +546,9 @@ class Game {
           return;
         }
 
-        this.ghosts.forEach((ghost) => this.updateGhost(ghost, speedMultiplier, deltaTime));
+        this.ghosts.forEach((ghost) =>
+          this.updateGhost(ghost, speedMultiplier, deltaTime),
+        );
         this.checkCollisions();
       }
     } else {
@@ -552,7 +556,9 @@ class Game {
       this.updatePlayerGhost(speedMultiplier);
       this.ghosts
         .filter((g) => !g.isPlayer)
-        .forEach((ghost) => this.updateGhost(ghost, speedMultiplier, deltaTime));
+        .forEach((ghost) =>
+          this.updateGhost(ghost, speedMultiplier, deltaTime),
+        );
       this.checkInverseCollisions();
     }
 
@@ -713,7 +719,10 @@ class Game {
 
       // Eat fruits
       this.fruits = this.fruits.filter((fruit) => {
-        const dist = Math.hypot(this.pacman.x - fruit.x, this.pacman.y - fruit.y);
+        const dist = Math.hypot(
+          this.pacman.x - fruit.x,
+          this.pacman.y - fruit.y,
+        );
         if (dist < CONFIG.TILE_SIZE) {
           if (fruit.type === "split") {
             this.splitPowerCount++; // Add a power-up to the counter
@@ -1688,10 +1697,10 @@ class Game {
       let spawnIndex = 0;
       for (let i = 0; i < this.ghosts.length; i++) {
         const targetGhost = this.ghosts[i];
-        
+
         // Skip ghosts that are already eaten
         if (targetGhost.eaten) continue;
-        
+
         const spawn = this.findSplitSpawnPosition(
           desiredSpawns[spawnIndex].x,
           desiredSpawns[spawnIndex].y,
