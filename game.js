@@ -1272,6 +1272,51 @@ class Game {
     return currentDirection;
   }
 
+  findNearestFreeTile(startX, startY, blockedPositions) {
+    // Use BFS to find the nearest walkable tile that's not in blockedPositions
+    const start = this.toGrid(startX, startY);
+    const queue = [start];
+    const visited = new Set([`${start.x},${start.y}`]);
+
+    // Check if a position is blocked by another entity
+    const isBlocked = (px, py) => {
+      return blockedPositions.some((pos) => {
+        const dist = Math.hypot(px - pos.x, py - pos.y);
+        return dist < CONFIG.TILE_SIZE * 1.5;
+      });
+    };
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const px = current.x * CONFIG.TILE_SIZE;
+      const py = current.y * CONFIG.TILE_SIZE;
+
+      // If this tile is walkable and not blocked, return it
+      if (this.canMove(px, py) && !isBlocked(px, py)) {
+        return { x: px, y: py };
+      }
+
+      // Explore neighbors
+      const neighbors = [
+        { x: current.x, y: current.y - 1 },
+        { x: current.x, y: current.y + 1 },
+        { x: current.x - 1, y: current.y },
+        { x: current.x + 1, y: current.y },
+      ];
+
+      for (const neighbor of neighbors) {
+        const key = `${neighbor.x},${neighbor.y}`;
+        if (!visited.has(key)) {
+          visited.add(key);
+          queue.push(neighbor);
+        }
+      }
+    }
+
+    // Fallback: return start position
+    return { x: startX, y: startY };
+  }
+
   moveGhostTowards(ghost, target) {
     const speed = ghost.scared ? CONFIG.GHOST_SCARED_SPEED : CONFIG.GHOST_SPEED;
 
@@ -1435,29 +1480,42 @@ class Game {
   activateInverseMode() {
     this.inverseMode = true;
     this.inverseModeTimer = CONFIG.INVERSE_DURATION;
-
-    // brief grace period so transformation cannot instantly kill the player
     this.inverseGraceTimer = 1000;
 
-    // Store Pac-Man's exact current position/direction
-    const pacmanX = this.pacman.x;
-    const pacmanY = this.pacman.y;
-    const pacmanDir = this.pacman.direction;
+    const playerX = this.pacman.x;
+    const playerY = this.pacman.y;
 
-    // Clear any previous player flags
+    const occupied = [{ x: playerX, y: playerY }];
+
     this.ghosts.forEach((ghost) => {
       ghost.isPlayer = false;
       ghost.scared = false;
       ghost.eaten = false;
-    });
+      ghost.releaseTimer = 0;
 
-    // Use the first ghost object as the player avatar, but place it exactly
-    // where Pac-Man currently is so control continues from that location
-    const playerGhost = this.ghosts[0];
-    playerGhost.isPlayer = true;
-    playerGhost.x = pacmanX;
-    playerGhost.y = pacmanY;
-    playerGhost.direction = pacmanDir;
+      if (ghost.mode === "exitingHouse") {
+        ghost.mode = this.ghostMode;
+      }
+
+      // Check if this ghost is too close to ANY already-placed entity (player or other ghosts)
+      // to ensure all 4 Pac-Men are visibly separated
+      let tooClose = false;
+      for (const pos of occupied) {
+        const dist = Math.hypot(ghost.x - pos.x, ghost.y - pos.y);
+        if (dist < CONFIG.TILE_SIZE * 1.5) {
+          tooClose = true;
+          break;
+        }
+      }
+
+      if (tooClose) {
+        const newPos = this.findNearestFreeTile(ghost.x, ghost.y, occupied);
+        ghost.x = newPos.x;
+        ghost.y = newPos.y;
+      }
+
+      occupied.push({ x: ghost.x, y: ghost.y });
+    });
   }
 
   findSplitSpawnPosition(baseX, baseY, preferredDirection) {
