@@ -680,53 +680,56 @@ class Game {
     // Handle screen wrap/teleport
     this.handleTeleport(this.pacman);
 
-    // Eat dots - check based on Pac-Man's center point
-    const centerX = this.pacman.x + CONFIG.TILE_SIZE / 2;
-    const centerY = this.pacman.y + CONFIG.TILE_SIZE / 2;
-    const gridX = Math.floor(centerX / CONFIG.TILE_SIZE);
-    const gridY = Math.floor(centerY / CONFIG.TILE_SIZE);
+    // Only eat dots in normal mode (not when player is controlling the ghost in inverse mode)
+    if (!this.inverseMode) {
+      // Eat dots - check based on Pac-Man's center point
+      const centerX = this.pacman.x + CONFIG.TILE_SIZE / 2;
+      const centerY = this.pacman.y + CONFIG.TILE_SIZE / 2;
+      const gridX = Math.floor(centerX / CONFIG.TILE_SIZE);
+      const gridY = Math.floor(centerY / CONFIG.TILE_SIZE);
 
-    // Make sure we're within bounds
-    if (
-      gridY >= 0 &&
-      gridY < this.map.length &&
-      gridX >= 0 &&
-      gridX < this.map[0].length
-    ) {
-      const cell = this.map[gridY]?.[gridX];
+      // Make sure we're within bounds
+      if (
+        gridY >= 0 &&
+        gridY < this.map.length &&
+        gridX >= 0 &&
+        gridX < this.map[0].length
+      ) {
+        const cell = this.map[gridY]?.[gridX];
 
-      if (cell === 2) {
-        this.map[gridY][gridX] = 0;
-        this.score += 10;
-        this.dotsEaten++;
-        this.soundManager.playEatDot();
-      } else if (cell === 3) {
-        this.map[gridY][gridX] = 0;
-        this.score += 50;
-        this.dotsEaten++;
-        this.soundManager.playPowerPellet();
-        this.activatePowerMode();
-      }
-    }
-
-    // Eat fruits
-    this.fruits = this.fruits.filter((fruit) => {
-      const dist = Math.hypot(this.pacman.x - fruit.x, this.pacman.y - fruit.y);
-      if (dist < CONFIG.TILE_SIZE) {
-        if (fruit.type === "split") {
-          this.splitPowerCount++; // Add a power-up to the counter
-          this.score += 100;
-        } else if (fruit.type === "teleport") {
-          this.teleportPowerCount++; // Add a teleport to the counter
-          this.score += 150;
-        } else {
-          this.score += fruit.points;
+        if (cell === 2) {
+          this.map[gridY][gridX] = 0;
+          this.score += 10;
+          this.dotsEaten++;
+          this.soundManager.playEatDot();
+        } else if (cell === 3) {
+          this.map[gridY][gridX] = 0;
+          this.score += 50;
+          this.dotsEaten++;
+          this.soundManager.playPowerPellet();
+          this.activatePowerMode();
         }
-        this.soundManager.playFruit();
-        return false;
       }
-      return true;
-    });
+
+      // Eat fruits
+      this.fruits = this.fruits.filter((fruit) => {
+        const dist = Math.hypot(this.pacman.x - fruit.x, this.pacman.y - fruit.y);
+        if (dist < CONFIG.TILE_SIZE) {
+          if (fruit.type === "split") {
+            this.splitPowerCount++; // Add a power-up to the counter
+            this.score += 100;
+          } else if (fruit.type === "teleport") {
+            this.teleportPowerCount++; // Add a teleport to the counter
+            this.score += 150;
+          } else {
+            this.score += fruit.points;
+          }
+          this.soundManager.playFruit();
+          return false;
+        }
+        return true;
+      });
+    }
   }
 
   findNearestTargetGhost(x, y) {
