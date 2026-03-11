@@ -235,6 +235,7 @@ class Game {
 
     this.powerMode = false;
     this.powerTimer = 0;
+    this.powerModeId = 0; // Incremented each time a new power pellet is eaten
     this.inverseMode = false;
     this.inverseModeTimer = 0;
     this.inverseGraceTimer = 0;
@@ -250,6 +251,11 @@ class Game {
     this.keys = {};
     this.lastTime = 0;
     this.soundManager = new SoundManager();
+
+    // Turn buffering: remember desired direction for a short window
+    this.bufferedDirection = null;
+    this.bufferTimer = 0;
+    this.BUFFER_DURATION = 150; // ms to keep trying a buffered turn
 
     this.init();
   }
@@ -350,6 +356,7 @@ class Game {
     this.splitPacmans = [];
     this.powerMode = false;
     this.powerTimer = 0;
+    this.powerModeId = 0;
     this.inverseMode = false;
     this.inverseModeTimer = 0;
     this.splitPowerActive = false;
@@ -567,91 +574,125 @@ class Game {
     // Get desired direction from input
     let desiredDirection = null;
     if (this.inverseMode) {
-      // Invert controls during inverse mode for extra challenge
       if (this.keys["ArrowUp"]) desiredDirection = "down";
       if (this.keys["ArrowDown"]) desiredDirection = "up";
       if (this.keys["ArrowLeft"]) desiredDirection = "right";
       if (this.keys["ArrowRight"]) desiredDirection = "left";
     } else {
-      // Normal controls
       if (this.keys["ArrowUp"]) desiredDirection = "up";
       if (this.keys["ArrowDown"]) desiredDirection = "down";
       if (this.keys["ArrowLeft"]) desiredDirection = "left";
       if (this.keys["ArrowRight"]) desiredDirection = "right";
     }
 
-    // Always keep Pac-Man aligned on the perpendicular axis to prevent getting stuck
-    const alignThreshold = 5; // Increased threshold for better alignment
+    // Turn buffering: remember the last key press so we keep trying it
+    if (desiredDirection) {
+      this.bufferedDirection = desiredDirection;
+      this.bufferTimer = this.BUFFER_DURATION;
+    } else if (this.bufferTimer > 0) {
+      this.bufferTimer -= 16; // ~1 frame at 60fps
+      desiredDirection = this.bufferedDirection;
+    } else {
+      this.bufferedDirection = null;
+    }
 
+    // Tile size shorthand
+    const T = CONFIG.TILE_SIZE;
+
+    // Helper: snap a coordinate to the nearest grid line if within tolerance
+    const snapTo = (val, tolerance) => {
+      const snapped = Math.round(val / T) * T;
+      return Math.abs(val - snapped) <= tolerance ? snapped : null;
+    };
+
+    // Generous perpendicular-axis snap while travelling straight
+    const straightSnap = T * 0.45;
     if (this.pacman.direction === "up" || this.pacman.direction === "down") {
-      // Moving vertically - keep aligned horizontally
-      const targetX =
-        Math.round(this.pacman.x / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-      const diffX = Math.abs(this.pacman.x - targetX);
-      if (diffX < alignThreshold) {
-        this.pacman.x = targetX;
-        newX = targetX;
+      const s = snapTo(this.pacman.x, straightSnap);
+      if (s !== null) {
+        this.pacman.x = s;
+        newX = s;
       }
     } else if (
       this.pacman.direction === "left" ||
       this.pacman.direction === "right"
     ) {
-      // Moving horizontally - keep aligned vertically
-      const targetY =
-        Math.round(this.pacman.y / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-      const diffY = Math.abs(this.pacman.y - targetY);
-      if (diffY < alignThreshold) {
-        this.pacman.y = targetY;
-        newY = targetY;
+      const s = snapTo(this.pacman.y, straightSnap);
+      if (s !== null) {
+        this.pacman.y = s;
+        newY = s;
       }
     }
 
-    // If changing direction, align on the NEW perpendicular axis
+    // --- Try desired turn with look-ahead ---
+    let turned = false;
     if (desiredDirection && desiredDirection !== this.pacman.direction) {
-      if (desiredDirection === "up" || desiredDirection === "down") {
-        // Turning vertically - align horizontally
-        const targetX =
-          Math.round(this.pacman.x / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-        const diffX = Math.abs(this.pacman.x - targetX);
-        if (diffX <= alignThreshold) {
-          this.pacman.x = targetX;
-          newX = targetX;
-        }
-      } else {
-        // Turning horizontally - align vertically
-        const targetY =
-          Math.round(this.pacman.y / CONFIG.TILE_SIZE) * CONFIG.TILE_SIZE;
-        const diffY = Math.abs(this.pacman.y - targetY);
-        if (diffY <= alignThreshold) {
-          this.pacman.y = targetY;
-          newY = targetY;
+      // Build a list of candidate snap positions along the travel axis.
+      // This lets Pac-Man "jump" to the nearest intersection within
+      // a generous window, so early/late key presses still work.
+      const turnSnap = T * 0.6; // how far ahead/behind to look
+
+      const isVerticalTurn =
+        desiredDirection === "up" || desiredDirection === "down";
+      // The axis we need to snap is perpendicular to the new direction
+      const posAlongSnap = isVerticalTurn ? this.pacman.x : this.pacman.y;
+      const posAlongTravel = isVerticalTurn ? this.pacman.y : this.pacman.x;
+
+      // Nearest grid line on the snap axis
+      const snappedPerp = snapTo(posAlongSnap, turnSnap);
+
+      // Also try the two nearest grid lines on the travel axis
+      const gridBelow = Math.ceil(posAlongTravel / T) * T;
+      const gridAbove = Math.floor(posAlongTravel / T) * T;
+      const candidates = [...new Set([posAlongTravel, gridAbove, gridBelow])]
+        .filter((g) => Math.abs(g - posAlongTravel) <= turnSnap)
+        .sort(
+          (a, b) => Math.abs(a - posAlongTravel) - Math.abs(b - posAlongTravel),
+        );
+
+      if (snappedPerp !== null) {
+        for (const candidate of candidates) {
+          let tryX = isVerticalTurn ? snappedPerp : candidate;
+          let tryY = isVerticalTurn ? candidate : snappedPerp;
+
+          // Test one step in the desired direction from this position
+          let testX = tryX,
+            testY = tryY;
+          if (desiredDirection === "up") testY -= speed;
+          if (desiredDirection === "down") testY += speed;
+          if (desiredDirection === "left") testX -= speed;
+          if (desiredDirection === "right") testX += speed;
+
+          if (this.canMove(testX, testY)) {
+            this.pacman.x = tryX;
+            this.pacman.y = tryY;
+            newX = testX;
+            newY = testY;
+            newDirection = desiredDirection;
+            turned = true;
+            this.bufferedDirection = null;
+            this.bufferTimer = 0;
+            break;
+          }
         }
       }
     }
 
-    // Apply movement based on current direction or desired direction
-    if (desiredDirection) {
-      const testX = newX;
-      const testY = newY;
+    // If we didn't turn, continue in the current direction
+    if (!turned) {
+      newX = this.pacman.x;
+      newY = this.pacman.y;
 
-      // Calculate new position based on desired direction
-      if (desiredDirection === "up") newY -= speed;
-      if (desiredDirection === "down") newY += speed;
-      if (desiredDirection === "left") newX -= speed;
-      if (desiredDirection === "right") newX += speed;
-
-      // If we can move in desired direction, update direction
-      if (this.canMove(newX, newY)) {
-        newDirection = desiredDirection;
-      } else {
-        // Can't move in desired direction, try current direction
-        newX = testX;
-        newY = testY;
-        if (this.pacman.direction === "up") newY -= speed;
-        if (this.pacman.direction === "down") newY += speed;
-        if (this.pacman.direction === "left") newX -= speed;
-        if (this.pacman.direction === "right") newX += speed;
+      // If desired direction is same as current, just keep going
+      if (desiredDirection && desiredDirection === this.pacman.direction) {
+        this.bufferedDirection = null;
+        this.bufferTimer = 0;
       }
+
+      if (this.pacman.direction === "up") newY -= speed;
+      if (this.pacman.direction === "down") newY += speed;
+      if (this.pacman.direction === "left") newX -= speed;
+      if (this.pacman.direction === "right") newX += speed;
     }
 
     // Check if Pac-Man is actually moving
@@ -663,8 +704,8 @@ class Game {
       this.pacman.direction = newDirection;
     }
 
-    // Play wakka sound only when actually moving
-    if (isMoving && this.canMove(this.pacman.x, this.pacman.y)) {
+    // Play wakka sound only when moving over dots/pellets
+    if (isMoving && isEating) {
       this.soundManager.startWakkaSound();
     } else {
       this.soundManager.stopWakkaSound();
@@ -1480,9 +1521,14 @@ class Game {
       // Normal power mode
       this.powerMode = true;
       this.powerTimer = CONFIG.POWER_DURATION;
+      this.powerModeId++;
       this.ghosts.forEach((ghost) => {
-        ghost.scared = true;
-        ghost.eaten = false;
+        if (!ghost.eaten) {
+          // Ghost is active on the map — scare it immediately
+          ghost.scared = true;
+        }
+        // Eaten ghosts: respawnGhost will check powerModeId when they
+        // finish respawning and scare them if a new pellet was eaten.
       });
     }
   }
@@ -1670,6 +1716,9 @@ class Game {
 
       this.splitPacmans = [];
 
+      // Remember which ghosts were already eaten before split activated
+      this.ghostsEatenBeforeSplit = this.ghosts.map((g) => g.eaten);
+
       const desiredSpawns = [
         {
           x: this.pacman.x,
@@ -1701,10 +1750,11 @@ class Game {
         // Skip ghosts that are already eaten
         if (targetGhost.eaten) continue;
 
+        const spawnDef = desiredSpawns[spawnIndex % desiredSpawns.length];
         const spawn = this.findSplitSpawnPosition(
-          desiredSpawns[spawnIndex].x,
-          desiredSpawns[spawnIndex].y,
-          desiredSpawns[spawnIndex].direction,
+          spawnDef.x,
+          spawnDef.y,
+          spawnDef.direction,
         );
         spawnIndex++;
 
@@ -1752,9 +1802,16 @@ class Game {
         this.splitPacmans = [];
         this.powerMode = false;
 
+        // Only respawn ghosts that were eaten during split mode,
+        // not ones that were already eaten/respawning beforehand.
         this.ghosts.forEach((ghost, i) => {
-          this.respawnGhostInHouse(ghost, i);
+          const wasEatenBefore =
+            this.ghostsEatenBeforeSplit && this.ghostsEatenBeforeSplit[i];
+          if (ghost.eaten && !wasEatenBefore) {
+            this.respawnGhostInHouse(ghost, i);
+          }
         });
+        this.ghostsEatenBeforeSplit = null;
       }
     } else {
       this.checkEntityGhostCollision(this.pacman);
@@ -1857,10 +1914,15 @@ class Game {
     ghost.mode = "exitingHouse";
     ghost.direction = "up";
 
+    // Remember which power mode activation was active when this ghost was eaten
+    const powerIdWhenEaten = this.powerModeId;
+
     // After 2 seconds, allow the ghost to exit and reset eaten status
     setTimeout(() => {
       ghost.eaten = false;
-      ghost.scared = false;
+      // If a NEW power pellet was eaten since this ghost was sent to the house,
+      // it should come back scared. Otherwise it comes back normal.
+      ghost.scared = this.powerMode && this.powerModeId > powerIdWhenEaten;
       ghost.releaseTimer = 0;
     }, 2000);
   }
