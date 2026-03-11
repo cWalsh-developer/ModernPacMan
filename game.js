@@ -1923,6 +1923,10 @@ class Game {
 
   nextLevel() {
     this.level++;
+    if (this.level === 5) {
+      this.lives++;
+      document.getElementById("lives").textContent = this.lives;
+    }
     this.paused = true;
     this.soundManager.playLevelComplete();
     this.showMessage("LEVEL COMPLETE!", `Starting Level ${this.level}...`);
