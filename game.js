@@ -1089,15 +1089,29 @@ class Game {
     return this.map[y][x] !== 1;
   }
 
+  wrapTile(x, y) {
+    const w = this.map[0].length;
+    const h = this.map.length;
+    return {
+      x: ((x % w) + w) % w,
+      y: ((y % h) + h) % h,
+    };
+  }
+
   getTileNeighbors(tile) {
-    const dirs = [
+    const raw = [
       { dir: "up", x: tile.x, y: tile.y - 1 },
       { dir: "down", x: tile.x, y: tile.y + 1 },
       { dir: "left", x: tile.x - 1, y: tile.y },
       { dir: "right", x: tile.x + 1, y: tile.y },
     ];
 
-    return dirs.filter((d) => this.isWalkableTile(d.x, d.y));
+    return raw
+      .map((d) => {
+        const wrapped = this.wrapTile(d.x, d.y);
+        return { dir: d.dir, x: wrapped.x, y: wrapped.y };
+      })
+      .filter((d) => this.isWalkableTile(d.x, d.y));
   }
 
   findPath(startX, startY, targetX, targetY) {
