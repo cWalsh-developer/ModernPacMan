@@ -750,8 +750,11 @@ class Game {
       return;
     }
 
-    const dx = waypoint.x - sp.x;
-    const dy = waypoint.y - sp.y;
+    const mapW = this.map[0].length * CONFIG.TILE_SIZE;
+    const mapH = this.map.length * CONFIG.TILE_SIZE;
+
+    const dx = this.getWrappedDelta(sp.x, waypoint.x, mapW);
+    const dy = this.getWrappedDelta(sp.y, waypoint.y, mapH);
 
     if (Math.abs(dx) <= speed && Math.abs(dy) <= speed) {
       sp.x = waypoint.x;
@@ -766,10 +769,14 @@ class Game {
     const next = sp.path[sp.pathIndex];
     if (!next) return;
 
-    if (next.x > sp.x) sp.direction = "right";
-    else if (next.x < sp.x) sp.direction = "left";
-    else if (next.y > sp.y) sp.direction = "down";
-    else if (next.y < sp.y) sp.direction = "up";
+    const ndx = this.getWrappedDelta(sp.x, next.x, mapW);
+    const ndy = this.getWrappedDelta(sp.y, next.y, mapH);
+
+    if (Math.abs(ndx) >= Math.abs(ndy)) {
+      sp.direction = ndx > 0 ? "right" : "left";
+    } else {
+      sp.direction = ndy > 0 ? "down" : "up";
+    }
 
     const moved = this.moveEntityInDirection(sp, speed);
 
@@ -781,10 +788,14 @@ class Game {
       const retry = sp.path[sp.pathIndex];
       if (!retry) return;
 
-      if (retry.x > sp.x) sp.direction = "right";
-      else if (retry.x < sp.x) sp.direction = "left";
-      else if (retry.y > sp.y) sp.direction = "down";
-      else if (retry.y < sp.y) sp.direction = "up";
+      const rdx = this.getWrappedDelta(sp.x, retry.x, mapW);
+      const rdy = this.getWrappedDelta(sp.y, retry.y, mapH);
+
+      if (Math.abs(rdx) >= Math.abs(rdy)) {
+        sp.direction = rdx > 0 ? "right" : "left";
+      } else {
+        sp.direction = rdy > 0 ? "down" : "up";
+      }
 
       this.moveEntityInDirection(sp, speed);
     }
@@ -923,6 +934,8 @@ class Game {
 
     const ghostGrid = this.toGrid(ghost.x, ghost.y);
     const pacGrid = this.toGrid(this.pacman.x, this.pacman.y);
+    const mapW = this.map[0].length;
+    const mapH = this.map.length;
 
     // For each available direction, look ahead to the next tile and score by distance from Pac-Man
     let bestDir = ghost.direction;
@@ -936,7 +949,10 @@ class Game {
       if (option.dir === "up") ny--;
       if (option.dir === "down") ny++;
 
-      const dist = Math.hypot(nx - pacGrid.x, ny - pacGrid.y);
+      // Wrap-aware distance
+      const dx = this.getWrappedDelta(pacGrid.x, nx, mapW);
+      const dy = this.getWrappedDelta(pacGrid.y, ny, mapH);
+      const dist = Math.hypot(dx, dy);
       if (dist > bestDist) {
         bestDist = dist;
         bestDir = option.dir;
@@ -1098,6 +1114,14 @@ class Game {
     };
   }
 
+  getWrappedDelta(from, to, mapSize) {
+    let d = to - from;
+    if (Math.abs(d) > mapSize / 2) {
+      d = d > 0 ? d - mapSize : d + mapSize;
+    }
+    return d;
+  }
+
   getTileNeighbors(tile) {
     const raw = [
       { dir: "up", x: tile.x, y: tile.y - 1 },
@@ -1210,7 +1234,7 @@ class Game {
     const runBfs = (avoidReverseAtStart) => {
       const queue = [start];
       const visited = new Set([`${start.x},${start.y}`]);
-      const parent = new Map();
+      const firstDir = new Map();
 
       while (queue.length > 0) {
         const current = queue.shift();
@@ -1239,7 +1263,12 @@ class Game {
           const key = `${next.x},${next.y}`;
           if (!visited.has(key)) {
             visited.add(key);
-            parent.set(key, { x: current.x, y: current.y });
+            // Propagate the direction of the first step from start
+            const dir =
+              current.x === start.x && current.y === start.y
+                ? next.dir
+                : firstDir.get(`${current.x},${current.y}`);
+            firstDir.set(key, dir);
             queue.push({ x: next.x, y: next.y });
           }
         }
@@ -1250,20 +1279,7 @@ class Game {
         return null;
       }
 
-      let step = { x: target.x, y: target.y };
-      let prev = parent.get(`${step.x},${step.y}`);
-
-      while (prev && !(prev.x === start.x && prev.y === start.y)) {
-        step = prev;
-        prev = parent.get(`${step.x},${step.y}`);
-      }
-
-      if (step.x > start.x) return "right";
-      if (step.x < start.x) return "left";
-      if (step.y > start.y) return "down";
-      if (step.y < start.y) return "up";
-
-      return currentDirection;
+      return firstDir.get(targetKey) || currentDirection;
     };
 
     // First try: avoid reversing
@@ -1904,8 +1920,6 @@ class Game {
           ];
 
           let fruit = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-
-          // Split power is now available on all levels, no restriction needed
 
           this.fruits.push({
             x: x * CONFIG.TILE_SIZE,
