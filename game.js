@@ -249,13 +249,23 @@ class Game {
     this.dotsEaten = 0;
 
     this.keys = {};
+    this.keyPressCounter = 0;
+    this.keyPressTick = {
+      ArrowUp: 0,
+      ArrowDown: 0,
+      ArrowLeft: 0,
+      ArrowRight: 0,
+    };
+    this.pendingArrowKey = null;
+    this.pendingArrowTimer = 0;
+    this.PENDING_ARROW_DURATION = 180; // ms: captures quick taps between frames
     this.lastTime = 0;
     this.soundManager = new SoundManager();
 
     // Turn buffering: remember desired direction for a short window
     this.bufferedDirection = null;
     this.bufferTimer = 0;
-    this.BUFFER_DURATION = 150; // ms to keep trying a buffered turn
+    this.BUFFER_DURATION = 240; // ms to keep trying a buffered turn
 
     this.init();
   }
@@ -283,6 +293,13 @@ class Game {
       }
 
       this.keys[e.key] = true;
+
+      if (this.keyPressTick[e.key] !== undefined) {
+        this.keyPressCounter += 1;
+        this.keyPressTick[e.key] = this.keyPressCounter;
+        this.pendingArrowKey = e.key;
+        this.pendingArrowTimer = this.PENDING_ARROW_DURATION;
+      }
 
       if (
         e.key === " " &&
@@ -318,6 +335,8 @@ class Game {
         e.preventDefault();
       }
       this.keys[e.key] = false;
+
+      // Pending key tap should still resolve for a short window even after keyup.
     });
   }
 
@@ -526,7 +545,7 @@ class Game {
         this.checkCollisions();
       } else {
         // Normal mode: player controls pac-man
-        this.updatePacMan(speedMultiplier);
+        this.updatePacMan(speedMultiplier, deltaTime);
 
         // If inverse mode was triggered during updatePacMan(),
         // stop normal processing immediately so we don't instantly collide
@@ -542,7 +561,7 @@ class Game {
       }
     } else {
       // Inverse mode: player controls Pac-Man (rendered as ghost), all 4 ghosts chase as Pac-Men
-      this.updatePacMan(speedMultiplier);
+      this.updatePacMan(speedMultiplier, deltaTime);
       this.ghosts.forEach((ghost) =>
         this.updateGhost(ghost, speedMultiplier, deltaTime),
       );
@@ -557,7 +576,7 @@ class Game {
     this.updateUI();
   }
 
-  updatePacMan(speedMultiplier = 1) {
+  updatePacMan(speedMultiplier = 1, frameTimeMs = 16.67) {
     if (!this.pacman) return;
 
     // Pac-Man moves slower while eating dots (like the original game)
@@ -571,27 +590,60 @@ class Game {
     let newY = this.pacman.y;
     let newDirection = this.pacman.direction;
 
-    // Get desired direction from input
+    // Get desired direction from input (latest keypress wins).
     let desiredDirection = null;
-    if (this.inverseMode) {
-      if (this.keys["ArrowUp"]) desiredDirection = "down";
-      if (this.keys["ArrowDown"]) desiredDirection = "up";
-      if (this.keys["ArrowLeft"]) desiredDirection = "right";
-      if (this.keys["ArrowRight"]) desiredDirection = "left";
-    } else {
-      if (this.keys["ArrowUp"]) desiredDirection = "up";
-      if (this.keys["ArrowDown"]) desiredDirection = "down";
-      if (this.keys["ArrowLeft"]) desiredDirection = "left";
-      if (this.keys["ArrowRight"]) desiredDirection = "right";
+    const arrowToDirection = (arrowKey) => {
+      if (this.inverseMode) {
+        if (arrowKey === "ArrowUp") return "down";
+        if (arrowKey === "ArrowDown") return "up";
+        if (arrowKey === "ArrowLeft") return "right";
+        if (arrowKey === "ArrowRight") return "left";
+      } else {
+        if (arrowKey === "ArrowUp") return "up";
+        if (arrowKey === "ArrowDown") return "down";
+        if (arrowKey === "ArrowLeft") return "left";
+        if (arrowKey === "ArrowRight") return "right";
+      }
+      return null;
+    };
+
+    let selectedArrowKey = null;
+    if (this.pendingArrowKey && this.pendingArrowTimer > 0) {
+      selectedArrowKey = this.pendingArrowKey;
+      this.pendingArrowTimer -= frameTimeMs;
+      if (this.pendingArrowTimer <= 0) {
+        this.pendingArrowTimer = 0;
+        this.pendingArrowKey = null;
+      }
     }
 
-    // Turn buffering: remember the last key press so we keep trying it
-    if (desiredDirection) {
+    if (!selectedArrowKey) {
+      let latestTick = -1;
+      const arrows = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+      for (const key of arrows) {
+        if (this.keys[key] && this.keyPressTick[key] > latestTick) {
+          latestTick = this.keyPressTick[key];
+          selectedArrowKey = key;
+        }
+      }
+    }
+
+    desiredDirection = arrowToDirection(selectedArrowKey);
+
+    // Turn buffering: preserve queued turns; do not let held forward overwrite them.
+    if (desiredDirection && desiredDirection !== this.pacman.direction) {
       this.bufferedDirection = desiredDirection;
       this.bufferTimer = this.BUFFER_DURATION;
     } else if (this.bufferTimer > 0) {
-      this.bufferTimer -= 16; // ~1 frame at 60fps
-      desiredDirection = this.bufferedDirection;
+      this.bufferTimer -= frameTimeMs;
+      if (this.bufferTimer > 0 && this.bufferedDirection) {
+        if (!desiredDirection || desiredDirection === this.pacman.direction) {
+          desiredDirection = this.bufferedDirection;
+        }
+      } else {
+        this.bufferTimer = 0;
+        this.bufferedDirection = null;
+      }
     } else {
       this.bufferedDirection = null;
     }
@@ -603,6 +655,20 @@ class Game {
     const snapTo = (val, tolerance) => {
       const snapped = Math.round(val / T) * T;
       return Math.abs(val - snapped) <= tolerance ? snapped : null;
+    };
+
+    const directionVector = (dir) => {
+      if (dir === "up") return { x: 0, y: -1 };
+      if (dir === "down") return { x: 0, y: 1 };
+      if (dir === "left") return { x: -1, y: 0 };
+      return { x: 1, y: 0 };
+    };
+
+    const oppositeDirection = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left",
     };
 
     // Generous perpendicular-axis snap while travelling straight
@@ -624,44 +690,97 @@ class Game {
       }
     }
 
-    // --- Try desired turn with look-ahead ---
     let turned = false;
+
+    // Immediate reversals should feel instant and not depend on intersection snapping.
+    if (
+      desiredDirection &&
+      desiredDirection === oppositeDirection[this.pacman.direction]
+    ) {
+      const reverseVec = directionVector(desiredDirection);
+      const reverseX = this.pacman.x + reverseVec.x * speed;
+      const reverseY = this.pacman.y + reverseVec.y * speed;
+
+      if (this.canMove(reverseX, reverseY)) {
+        newX = reverseX;
+        newY = reverseY;
+        newDirection = desiredDirection;
+        turned = true;
+        this.bufferedDirection = null;
+        this.bufferTimer = 0;
+      }
+    }
+
+    // --- Try desired turn with center-window + forward-crossing guard ---
     if (desiredDirection && desiredDirection !== this.pacman.direction) {
-      // Build a list of candidate snap positions along the travel axis.
-      // This lets Pac-Man "jump" to the nearest intersection within
-      // a generous window, so early/late key presses still work.
-      const turnSnap = T * 0.6; // how far ahead/behind to look
+      const alignWindow = Math.max(2.5, speed * 2.2);
+      const centerWindow = Math.max(2.5, speed * 2.0);
+      const lookAhead = speed * 1.2 + centerWindow;
+
+      const canTurnFromAnchor = (anchorX, anchorY, dir) => {
+        const tileX = Math.round(anchorX / T);
+        const tileY = Math.round(anchorY / T);
+        let nextX = tileX;
+        let nextY = tileY;
+
+        if (dir === "up") nextY--;
+        if (dir === "down") nextY++;
+        if (dir === "left") nextX--;
+        if (dir === "right") nextX++;
+
+        const wrapped = this.wrapTile(nextX, nextY);
+        return this.isWalkableTile(wrapped.x, wrapped.y);
+      };
 
       const isVerticalTurn =
         desiredDirection === "up" || desiredDirection === "down";
-      // The axis we need to snap is perpendicular to the new direction
       const posAlongSnap = isVerticalTurn ? this.pacman.x : this.pacman.y;
       const posAlongTravel = isVerticalTurn ? this.pacman.y : this.pacman.x;
 
-      // Nearest grid line on the snap axis
-      const snappedPerp = snapTo(posAlongSnap, turnSnap);
-
-      // Also try the two nearest grid lines on the travel axis
-      const gridBelow = Math.ceil(posAlongTravel / T) * T;
-      const gridAbove = Math.floor(posAlongTravel / T) * T;
-      const candidates = [...new Set([posAlongTravel, gridAbove, gridBelow])]
-        .filter((g) => Math.abs(g - posAlongTravel) <= turnSnap)
-        .sort(
-          (a, b) => Math.abs(a - posAlongTravel) - Math.abs(b - posAlongTravel),
-        );
+      // Only allow a turn if we're well-aligned on the perpendicular axis.
+      const snappedPerp = snapTo(posAlongSnap, alignWindow);
 
       if (snappedPerp !== null) {
-        for (const candidate of candidates) {
+        const rounded = Math.round(posAlongTravel / T) * T;
+        const forward =
+          this.pacman.direction === "right" || this.pacman.direction === "down"
+            ? Math.ceil(posAlongTravel / T) * T
+            : Math.floor(posAlongTravel / T) * T;
+
+        const candidates = [];
+        if (Math.abs(rounded - posAlongTravel) <= centerWindow) {
+          candidates.push(rounded);
+        }
+        if (
+          Math.abs(forward - posAlongTravel) <= lookAhead &&
+          !candidates.includes(forward)
+        ) {
+          candidates.push(forward);
+        }
+
+        const movingPositive =
+          this.pacman.direction === "right" || this.pacman.direction === "down";
+        const isAheadOrCurrent = (candidate) =>
+          movingPositive
+            ? candidate >= posAlongTravel - 0.1
+            : candidate <= posAlongTravel + 0.1;
+
+        for (const candidate of candidates.filter(isAheadOrCurrent)) {
           let tryX = isVerticalTurn ? snappedPerp : candidate;
           let tryY = isVerticalTurn ? candidate : snappedPerp;
 
-          // Test one step in the desired direction from this position
-          let testX = tryX,
-            testY = tryY;
-          if (desiredDirection === "up") testY -= speed;
-          if (desiredDirection === "down") testY += speed;
-          if (desiredDirection === "left") testX -= speed;
-          if (desiredDirection === "right") testX += speed;
+          // Anchor must be valid first, then one step in the desired direction.
+          if (
+            !this.canMove(tryX, tryY) ||
+            !canTurnFromAnchor(tryX, tryY, desiredDirection)
+          ) {
+            continue;
+          }
+
+          const vec = directionVector(desiredDirection);
+          const turnStep = Math.max(speed, 1);
+          const testX = tryX + vec.x * turnStep;
+          const testY = tryY + vec.y * turnStep;
 
           if (this.canMove(testX, testY)) {
             this.pacman.x = tryX;
@@ -695,14 +814,79 @@ class Game {
       if (this.pacman.direction === "right") newX += speed;
     }
 
-    // Check if Pac-Man is actually moving
-    const isMoving = newX !== this.pacman.x || newY !== this.pacman.y;
+    const prevX = this.pacman.x;
+    const prevY = this.pacman.y;
 
     if (this.canMove(newX, newY)) {
       this.pacman.x = newX;
       this.pacman.y = newY;
       this.pacman.direction = newDirection;
+    } else if (desiredDirection && desiredDirection !== this.pacman.direction) {
+      // Fallback pivot: if forward move is blocked, try committing the buffered turn in-place.
+      const alignWindow = Math.max(2.5, speed * 2.2);
+      const isVerticalTurn =
+        desiredDirection === "up" || desiredDirection === "down";
+
+      const snappedX = Math.round(this.pacman.x / T) * T;
+      const snappedY = Math.round(this.pacman.y / T) * T;
+      const perpendicularOffset = isVerticalTurn
+        ? Math.abs(this.pacman.x - snappedX)
+        : Math.abs(this.pacman.y - snappedY);
+
+      if (
+        perpendicularOffset <= alignWindow * 1.5 &&
+        this.canMove(snappedX, snappedY) &&
+        this.isWalkableTile(
+          this.wrapTile(
+            Math.round(snappedX / T) +
+              (desiredDirection === "right"
+                ? 1
+                : desiredDirection === "left"
+                  ? -1
+                  : 0),
+            Math.round(snappedY / T) +
+              (desiredDirection === "down"
+                ? 1
+                : desiredDirection === "up"
+                  ? -1
+                  : 0),
+          ).x,
+          this.wrapTile(
+            Math.round(snappedX / T) +
+              (desiredDirection === "right"
+                ? 1
+                : desiredDirection === "left"
+                  ? -1
+                  : 0),
+            Math.round(snappedY / T) +
+              (desiredDirection === "down"
+                ? 1
+                : desiredDirection === "up"
+                  ? -1
+                  : 0),
+          ).y,
+        )
+      ) {
+        const step = Math.max(speed, 1);
+        let testX = snappedX;
+        let testY = snappedY;
+        if (desiredDirection === "up") testY -= step;
+        if (desiredDirection === "down") testY += step;
+        if (desiredDirection === "left") testX -= step;
+        if (desiredDirection === "right") testX += step;
+
+        if (this.canMove(testX, testY)) {
+          this.pacman.x = testX;
+          this.pacman.y = testY;
+          this.pacman.direction = desiredDirection;
+          this.bufferedDirection = null;
+          this.bufferTimer = 0;
+        }
+      }
     }
+
+    // Check if Pac-Man is actually moving
+    const isMoving = this.pacman.x !== prevX || this.pacman.y !== prevY;
 
     // Play wakka sound only when moving over dots/pellets
     if (isMoving && isEating) {
