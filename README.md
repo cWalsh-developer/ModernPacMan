@@ -1,6 +1,6 @@
 # Pac-Bloke
 
-A modern twist on the classic Pac-Man game built with vanilla HTML, CSS, and JavaScript.
+A modern twist on the classic Pac-Man game built with vanilla HTML, CSS, and JavaScript. This will likely be one of the hardest Pac-Man-style games you will ever play!
 
 ## Features
 
