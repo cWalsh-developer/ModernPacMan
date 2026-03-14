@@ -78,6 +78,18 @@
                 <p id="messageText">Press any key to start</p>
             </div>
         </div>
+
+        <div id="restartConfirmModal" class="game-message hidden">
+            <div class="message-content confirm-content">
+                <h2>RESTART GAME?</h2>
+                <p>Are you sure you want to restart? Your current run will be lost.</p>
+                <div class="confirm-actions">
+                    <button id="confirmRestartBtn" class="confirm-btn confirm-btn-danger" type="button">Yes, Restart</button>
+                    <button id="cancelRestartBtn" class="confirm-btn" type="button">Cancel</button>
+                </div>
+                <p class="confirm-hint">Keyboard: Arrow keys switch option, Enter selects highlighted option</p>
+            </div>
+        </div>
     </div>
     
     <script src="game.js"></script>

@@ -267,6 +267,10 @@ class Game {
     this.bufferTimer = 0;
     this.BUFFER_DURATION = 240; // ms to keep trying a buffered turn
 
+    this.restartConfirmOpen = false;
+    this.wasPausedBeforeRestartConfirm = false;
+    this.restartConfirmSelection = "cancel";
+
     this.init();
   }
 
@@ -280,10 +284,56 @@ class Game {
   }
 
   setupEventListeners() {
+    const confirmBtn = document.getElementById("confirmRestartBtn");
+    const cancelBtn = document.getElementById("cancelRestartBtn");
+
+    if (confirmBtn) {
+      confirmBtn.addEventListener("mouseenter", () =>
+        this.setRestartConfirmSelection("confirm"),
+      );
+      confirmBtn.addEventListener("focus", () =>
+        this.setRestartConfirmSelection("confirm"),
+      );
+      confirmBtn.addEventListener("click", () => {
+        this.setRestartConfirmSelection("confirm");
+        this.confirmRestart();
+      });
+    }
+    if (cancelBtn) {
+      cancelBtn.addEventListener("mouseenter", () =>
+        this.setRestartConfirmSelection("cancel"),
+      );
+      cancelBtn.addEventListener("focus", () =>
+        this.setRestartConfirmSelection("cancel"),
+      );
+      cancelBtn.addEventListener("click", () => {
+        this.setRestartConfirmSelection("cancel");
+        this.cancelRestart();
+      });
+    }
+
     document.addEventListener("keydown", (e) => {
       // Prevent default behavior for arrow keys to stop page scrolling
       if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key)) {
         e.preventDefault();
+      }
+
+      if (this.restartConfirmOpen) {
+        if (
+          e.key === "ArrowLeft" ||
+          e.key === "ArrowRight" ||
+          e.key === "ArrowUp" ||
+          e.key === "ArrowDown"
+        ) {
+          this.toggleRestartConfirmSelection();
+        } else if (e.key === "Enter") {
+          if (this.restartConfirmSelection === "confirm") {
+            this.confirmRestart();
+          } else {
+            this.cancelRestart();
+          }
+        }
+        return;
       }
 
       if (!this.gameStarted) {
@@ -321,7 +371,7 @@ class Game {
       }
 
       if (e.key === "r" || e.key === "R") {
-        this.restart();
+        this.requestRestart();
       }
 
       if (e.key === "m" || e.key === "M") {
@@ -338,6 +388,92 @@ class Game {
 
       // Pending key tap should still resolve for a short window even after keyup.
     });
+  }
+
+  requestRestart() {
+    if (this.restartConfirmOpen) return;
+
+    // If the run is already over, restart immediately with no confirmation.
+    if (this.gameOver) {
+      this.restart();
+      return;
+    }
+
+    this.restartConfirmOpen = true;
+    this.wasPausedBeforeRestartConfirm = this.paused;
+
+    if (this.gameStarted && !this.gameOver && !this.paused) {
+      this.paused = true;
+    }
+
+    const modal = document.getElementById("restartConfirmModal");
+    if (modal) {
+      modal.classList.remove("hidden");
+    }
+
+    this.setRestartConfirmSelection("cancel");
+  }
+
+  cancelRestart() {
+    if (!this.restartConfirmOpen) return;
+
+    this.restartConfirmOpen = false;
+    const modal = document.getElementById("restartConfirmModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+
+    if (
+      this.gameStarted &&
+      !this.gameOver &&
+      !this.wasPausedBeforeRestartConfirm
+    ) {
+      this.paused = false;
+    }
+  }
+
+  confirmRestart() {
+    if (!this.restartConfirmOpen) return;
+
+    this.restartConfirmOpen = false;
+    const modal = document.getElementById("restartConfirmModal");
+    if (modal) {
+      modal.classList.add("hidden");
+    }
+
+    this.restart();
+  }
+
+  setRestartConfirmSelection(selection) {
+    this.restartConfirmSelection =
+      selection === "confirm" ? "confirm" : "cancel";
+
+    const confirmBtn = document.getElementById("confirmRestartBtn");
+    const cancelBtn = document.getElementById("cancelRestartBtn");
+
+    if (confirmBtn) {
+      const isSelected = this.restartConfirmSelection === "confirm";
+      confirmBtn.classList.toggle("selected", isSelected);
+      if (isSelected) {
+        confirmBtn.focus();
+      }
+    }
+
+    if (cancelBtn) {
+      const isSelected = this.restartConfirmSelection === "cancel";
+      cancelBtn.classList.toggle("selected", isSelected);
+      if (isSelected) {
+        cancelBtn.focus();
+      }
+    }
+  }
+
+  toggleRestartConfirmSelection() {
+    if (!this.restartConfirmOpen) return;
+
+    this.setRestartConfirmSelection(
+      this.restartConfirmSelection === "confirm" ? "cancel" : "confirm",
+    );
   }
 
   resetLevel() {
@@ -389,9 +525,15 @@ class Game {
   }
 
   restart() {
+    this.keys = {};
+    this.pendingArrowKey = null;
+    this.pendingArrowTimer = 0;
+    this.bufferedDirection = null;
+    this.bufferTimer = 0;
     this.score = 0;
     this.level = 1;
     this.lives = 3;
+    this.paused = false;
     this.gameOver = false;
     this.gameStarted = false;
     this.splitPowerCount = 1;
