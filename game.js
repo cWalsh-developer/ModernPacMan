@@ -2160,6 +2160,7 @@ class Game {
           this.respawnGhost(ghost);
         } else if (!ghost.scared && entity === this.pacman) {
           this.loseLife();
+          return;
         }
       }
     }
@@ -2254,7 +2255,9 @@ class Game {
   }
 
   loseLife() {
-    this.lives--;
+    if (this.gameOver || this.lives <= 0) return;
+
+    this.lives = Math.max(0, this.lives - 1);
     this.soundManager.playDeath();
 
     if (this.lives <= 0) {
