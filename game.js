@@ -355,13 +355,14 @@ class Game {
         e.key === " " &&
         this.splitPowerCount > 0 &&
         this.powerMode &&
-        !this.inverseMode
+        !this.inverseMode &&
+        !this.gameOver
       ) {
         this.activateSplitPower();
         e.preventDefault();
       }
 
-      if (e.key === "Shift" && this.teleportPowerCount > 0) {
+      if (e.key === "Shift" && this.teleportPowerCount > 0 && !this.gameOver) {
         this.activateTeleportPower();
         e.preventDefault();
       }
@@ -1984,6 +1985,8 @@ class Game {
   }
 
   activateTeleportPower() {
+    if (this.gameOver) return;
+
     if (this.teleportPowerCount > 0 && !this.splitPowerActive) {
       this.teleportPowerCount--;
       this.soundManager.playTeleport();
@@ -2028,6 +2031,8 @@ class Game {
   }
 
   activateSplitPower() {
+    if (this.gameOver) return;
+
     if (!this.splitPowerActive && this.splitPowerCount > 0 && this.powerMode) {
       this.splitPowerActive = true;
       this.splitPowerCount--;
