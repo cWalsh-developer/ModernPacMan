@@ -2046,9 +2046,13 @@ class Game {
       });
 
       this.splitPacmans = [];
+      this.splitTargetGhostIndices = new Set();
 
-      // Remember which ghosts were already eaten before split activated
-      this.ghostsEatenBeforeSplit = this.ghosts.map((g) => g.eaten);
+      // Remember which ghosts are unavailable at split start
+      // (already eaten or still exiting the house).
+      this.ghostsUnavailableBeforeSplit = this.ghosts.map(
+        (g) => g.eaten || g.mode === "exitingHouse",
+      );
 
       const desiredSpawns = [
         {
@@ -2073,13 +2077,13 @@ class Game {
         },
       ];
 
-      // Only create split Pac-Men for ghosts that aren't already eaten
+      // Only create split Pac-Men for ghosts that are active on the map.
       let spawnIndex = 0;
       for (let i = 0; i < this.ghosts.length; i++) {
         const targetGhost = this.ghosts[i];
 
-        // Skip ghosts that are already eaten
-        if (targetGhost.eaten) continue;
+        // Skip ghosts that are eaten or still exiting the house.
+        if (targetGhost.eaten || targetGhost.mode === "exitingHouse") continue;
 
         const spawnDef = desiredSpawns[spawnIndex % desiredSpawns.length];
         const spawn = this.findSplitSpawnPosition(
@@ -2105,6 +2109,7 @@ class Game {
           pathIndex: 0,
           completed: false,
         });
+        this.splitTargetGhostIndices.add(i);
       }
     }
   }
@@ -2133,16 +2138,20 @@ class Game {
         this.splitPacmans = [];
         this.powerMode = false;
 
-        // Only respawn ghosts that were eaten during split mode,
-        // not ones that were already eaten/respawning beforehand.
+        // Only respawn ghosts that were active targets in this split activation.
         this.ghosts.forEach((ghost, i) => {
-          const wasEatenBefore =
-            this.ghostsEatenBeforeSplit && this.ghostsEatenBeforeSplit[i];
-          if (ghost.eaten && !wasEatenBefore) {
+          const wasUnavailableBefore =
+            this.ghostsUnavailableBeforeSplit &&
+            this.ghostsUnavailableBeforeSplit[i];
+          const wasTargetedBySplit =
+            this.splitTargetGhostIndices && this.splitTargetGhostIndices.has(i);
+
+          if (ghost.eaten && wasTargetedBySplit && !wasUnavailableBefore) {
             this.respawnGhostInHouse(ghost, i);
           }
         });
-        this.ghostsEatenBeforeSplit = null;
+        this.ghostsUnavailableBeforeSplit = null;
+        this.splitTargetGhostIndices = null;
       }
     } else {
       this.checkEntityGhostCollision(this.pacman);
