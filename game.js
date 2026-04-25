@@ -5,6 +5,8 @@ const CONFIG = {
   GHOST_SPEED: 1.3, // Close to Pac-Man speed for a real threat
   GHOST_SCARED_SPEED: 0.85, // Noticeably slower when scared but still moving
   POWER_DURATION: 10000,
+  POWER_FLASH_WARNING_TIME: 3000,
+  POWER_FLASH_INTERVAL: 250,
   INVERSE_DURATION: 15000,
   FRUIT_SPAWN_TIME: 10000,
   FRUIT_DURATION: 8000,
@@ -597,6 +599,17 @@ class Game {
     // Level 1: 1.0x, Level 2: 1.08x, Level 3: 1.16x ... Level 10+: 1.72x
     const levelForSpeed = Math.min(this.level, 10);
     return 1 + (levelForSpeed - 1) * 0.08;
+  }
+
+  getFrightenedGhostStyle() {
+    const isFlashing =
+      this.powerMode &&
+      this.powerTimer <= CONFIG.POWER_FLASH_WARNING_TIME &&
+      Math.floor(this.powerTimer / CONFIG.POWER_FLASH_INTERVAL) % 2 === 0;
+
+    return isFlashing
+      ? { fill: "#FFF", stroke: "#000" }
+      : { fill: "#0000FF", stroke: "#FFF" };
   }
 
   gameLoop(currentTime = 0) {
@@ -2516,8 +2529,9 @@ class Game {
           });
           return;
         } else if (ghost.scared) {
-          this.ctx.fillStyle = "#0000FF";
-          this.ctx.strokeStyle = "#FFF";
+          const frightenedStyle = this.getFrightenedGhostStyle();
+          this.ctx.fillStyle = frightenedStyle.fill;
+          this.ctx.strokeStyle = frightenedStyle.stroke;
           this.ctx.lineWidth = 1;
         } else {
           this.ctx.fillStyle = ghost.color;
